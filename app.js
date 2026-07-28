@@ -72,11 +72,13 @@ const ZoneConfig = {
     const payload = {
       n: zone.name,
       d: zone.description || '',
-      f: zone.folderId,
+      f: zone.rootFolderId || zone.folderId,
       t: zone.template,
       r: { n: !!(zone.fields && zone.fields.name), e: !!(zone.fields && zone.fields.email) },
       m: zone.maxMb || 25,
-      c: clientId || Store.getClientId()
+      c: clientId || Store.getClientId(),
+      st: !!zone.structured,            // mode arborescence campus/groupe/etudiant
+      tr: zone.tree || null             // { "Nice": { i:"idNice", g:{ "Groupe 1":"id1" } } }
     };
     return Util.b64encode(JSON.stringify(payload));
   },
@@ -86,11 +88,14 @@ const ZoneConfig = {
     return {
       name: p.n,
       description: p.d || '',
+      rootFolderId: p.f,
       folderId: p.f,
       template: p.t,
       fields: { name: !!(p.r && p.r.n), email: !!(p.r && p.r.e) },
       maxMb: p.m || 25,
-      clientId: p.c || ''
+      clientId: p.c || '',
+      structured: !!p.st,
+      tree: p.tr || null
     };
   },
 
@@ -113,7 +118,9 @@ const Renamer = {
     ['{datetime}', 'Date et heure'],
     ['{year}', 'Annee'], ['{month}', 'Mois'], ['{day}', 'Jour'],
     ['{zone}', 'Nom de la zone'],
-    ['{name}', 'Nom du deposant'],
+    ['{campus}', 'Campus (Nice, Bordeaux...)'],
+    ['{groupe}', 'Groupe'],
+    ['{name}', "Nom de l'etudiant / deposant"],
     ['{email}', 'Email du deposant'],
     ['{original}', "Nom d'origine du fichier"],
     ['{ext}', 'Extension'],
@@ -138,6 +145,8 @@ const Renamer = {
       '{month}': p(d.getMonth() + 1),
       '{day}': p(d.getDate()),
       '{zone}': Util.slug(ctx.zone),
+      '{campus}': Util.slug(ctx.campus),
+      '{groupe}': Util.slug(ctx.groupe),
       '{name}': Util.slug(ctx.name),
       '{email}': Util.slug(ctx.email),
       '{original}': Util.slug(base),
@@ -147,7 +156,7 @@ const Renamer = {
     };
 
     let out = (template || '{datetime}_{original}').replace(
-      /\{(date|time|datetime|year|month|day|zone|name|email|original|ext|counter|rand)\}/g,
+      /\{(date|time|datetime|year|month|day|zone|campus|groupe|name|email|original|ext|counter|rand)\}/g,
       (m) => (map[m] !== undefined ? map[m] : '')
     );
 
@@ -202,6 +211,45 @@ const GDrive = {
 
   isSignedIn() {
     return !!this._token;
+  },
+
+  _authHeaders(json) {
+    const h = { 'Authorization': 'Bearer ' + this._token };
+    if (json) h['Content-Type'] = 'application/json';
+    return h;
+  },
+
+  // Cherche un sous-dossier par nom dans un dossier parent.
+  // Note : sous le perimetre drive.file, ne retourne que les dossiers
+  // crees par cette application pour l'utilisateur courant.
+  async findFolder(name, parentId) {
+    const safe = String(name).replace(/'/g, "\\'");
+    let q = "mimeType='application/vnd.google-apps.folder' and trashed=false and name='" + safe + "'";
+    if (parentId) q += " and '" + parentId + "' in parents";
+    const url = 'https://www.googleapis.com/drive/v3/files?q=' +
+      encodeURIComponent(q) + '&fields=files(id,name)&spaces=drive';
+    const r = await fetch(url, { headers: this._authHeaders(false) });
+    if (!r.ok) throw new Error('Recherche de dossier (' + r.status + ')');
+    const data = await r.json();
+    return (data.files && data.files.length) ? data.files[0].id : null;
+  },
+
+  async createFolder(name, parentId) {
+    const meta = { name: String(name), mimeType: 'application/vnd.google-apps.folder' };
+    if (parentId) meta.parents = [parentId];
+    const r = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+      method: 'POST', headers: this._authHeaders(true), body: JSON.stringify(meta)
+    });
+    if (!r.ok) throw new Error('Creation de dossier (' + r.status + ') : ' + await r.text());
+    return (await r.json()).id;
+  },
+
+  // Retourne l'id du dossier existant, sinon le cree.
+  async ensureFolder(name, parentId) {
+    let found = null;
+    try { found = await this.findFolder(name, parentId); } catch (e) { found = null; }
+    if (found) return found;
+    return await this.createFolder(name, parentId);
   },
 
   // Upload d'un fichier avec suivi de progression

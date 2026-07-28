@@ -44,23 +44,20 @@
       <div class="dropzone" id="dropzone">
         <div class="dz-icon">&#128228;</div>
         <div class="dz-main">Glissez vos fichiers ici</div>
-        <div class="dz-sub">ou cliquez pour parcourir &middot; max <span id="maxLabel">25</span> Mo par fichier</div>
+        <div class="dz-sub">ou cliquez pour parcourir &middot; plusieurs fichiers possibles &middot; max <span id="maxLabel">50</span> Mo par fichier</div>
         <input type="file" id="fileInput" multiple class="hidden">
       </div>
 
-      <!-- Liste des fichiers -->
       <div id="fileList"></div>
 
-      <!-- Message d'erreur global -->
       <div class="notice notice-err hidden" id="errBox" style="margin-top:16px"></div>
 
-      <!-- Bouton d'envoi -->
       <button class="btn btn-primary btn-block btn-lg hidden" id="sendBtn" style="margin-top:18px">
         <span id="sendLabel">Se connecter a Google et envoyer</span>
       </button>
 
-      <p class="footer-note">
-        Les fichiers sont renommes automatiquement puis envoyes directement dans le Google Drive de l'organisateur.
+      <p class="footer-note" id="footNote">
+        Vos fichiers sont ranges automatiquement dans le Drive de l'organisateur.
         Vous vous connectez avec votre propre compte Google.
       </p>
     </div>
@@ -81,16 +78,15 @@
   <script>
   const $ = (id) => document.getElementById(id);
   let zone = null;
-  let files = [];          // { file, newName, status, progress }
+  let files = [];          // { file, newName, status, error, progress }
   let sending = false;
+  let studentFolderId = null;   // cree une fois par session de depot
 
-  /* --------------------------- Lecture du lien -------------------------- */
   function parseHash() {
     const m = location.hash.match(/z=([^&]+)/);
     if (!m) return null;
     try { return ZoneConfig.decode(m[1]); } catch (e) { return null; }
   }
-
   function escapeHtml(s) {
     return (s || '').replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -107,37 +103,68 @@
     $('maxLabel').textContent = zone.maxMb;
     if (!zone.clientId) $('configWarn').classList.remove('hidden');
 
-    // Champs deposant
     let html = '';
-    if (zone.fields.name) {
-      html += `<div class="field"><label for="depName">Votre nom</label>
+    if (zone.structured && zone.tree) {
+      const campuses = Object.keys(zone.tree);
+      html += `<div class="select-field"><label for="depCampus">Campus</label>
+        <select id="depCampus"><option value="">- Choisir -</option>` +
+        campuses.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('') +
+        `</select></div>`;
+      html += `<div class="select-field"><label for="depGroup">Groupe</label>
+        <select id="depGroup"><option value="">- Choisir un campus d'abord -</option></select></div>`;
+      html += `<div class="field"><label for="depName">Votre nom (etudiant)</label>
         <input type="text" id="depName" placeholder="Prenom Nom"></div>`;
-    }
-    if (zone.fields.email) {
-      html += `<div class="field"><label for="depEmail">Votre email</label>
-        <input type="email" id="depEmail" placeholder="prenom.nom@exemple.fr"></div>`;
+      if (zone.fields.email) {
+        html += `<div class="field"><label for="depEmail">Votre email</label>
+          <input type="email" id="depEmail" placeholder="prenom.nom@exemple.fr"></div>`;
+      }
+    } else {
+      if (zone.fields.name) {
+        html += `<div class="field"><label for="depName">Votre nom</label>
+          <input type="text" id="depName" placeholder="Prenom Nom"></div>`;
+      }
+      if (zone.fields.email) {
+        html += `<div class="field"><label for="depEmail">Votre email</label>
+          <input type="email" id="depEmail" placeholder="prenom.nom@exemple.fr"></div>`;
+      }
     }
     $('depositorFields').innerHTML = html;
+
+    if (zone.structured && zone.tree) {
+      $('depCampus').addEventListener('change', () => { populateGroups(); recomputeNames(); });
+    }
   }
 
-  /* --------------------------- Gestion fichiers ------------------------- */
-  function depositorCtx() {
+  function populateGroups() {
+    const campus = $('depCampus').value;
+    const sel = $('depGroup');
+    if (!campus || !zone.tree[campus]) {
+      sel.innerHTML = '<option value="">- Choisir un campus d\'abord -</option>';
+      return;
+    }
+    const groups = Object.keys(zone.tree[campus].g || {});
+    sel.innerHTML = '<option value="">- Choisir -</option>' +
+      groups.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+  }
+
+  /* --------------------------- Contexte depot --------------------------- */
+  function ctx() {
     return {
       zone: zone.name,
+      campus: $('depCampus') ? $('depCampus').value : '',
+      groupe: $('depGroup') ? $('depGroup').value : '',
       name: $('depName') ? $('depName').value : '',
       email: $('depEmail') ? $('depEmail').value : ''
     };
   }
 
   function addFiles(fileList) {
-    const ctx = depositorCtx();
+    const c = ctx();
     Array.from(fileList).forEach((f) => {
       const tooBig = f.size > zone.maxMb * 1024 * 1024;
       files.push({
         file: f,
-        newName: Renamer.apply(zone.template, {
-          ...ctx, original: f.name, counter: files.length + 1, date: new Date()
-        }),
+        newName: Renamer.apply(zone.template, { ...c, original: f.name, counter: files.length + 1, date: new Date() }),
         status: tooBig ? 'error' : 'ready',
         error: tooBig ? 'Fichier trop volumineux' : null,
         progress: 0
@@ -145,15 +172,11 @@
     });
     renderFiles();
   }
-
-  // Recalcule les noms quand le deposant remplit son nom/email
   function recomputeNames() {
-    const ctx = depositorCtx();
+    const c = ctx();
     files.forEach((item, i) => {
       if (item.status === 'ready') {
-        item.newName = Renamer.apply(zone.template, {
-          ...ctx, original: item.file.name, counter: i + 1, date: new Date()
-        });
+        item.newName = Renamer.apply(zone.template, { ...c, original: item.file.name, counter: i + 1, date: new Date() });
       }
     });
     renderFiles();
@@ -170,8 +193,8 @@
         <div class="fr-icon">${icons[item.status] || '&#128196;'}</div>
         <div class="fr-main">
           <div class="fr-new">${escapeHtml(item.newName)}</div>
-          <div class="fr-old">${escapeHtml(item.file.name)}${item.error ? ' &middot; <span style="color:#b42318">'+item.error+'</span>' : ''}</div>
-          ${item.status === 'uploading' ? `<div class="progress"><span style="width:${Math.round(item.progress*100)}%"></span></div>` : ''}
+          <div class="fr-old">${escapeHtml(item.file.name)}${item.error ? ' &middot; <span style="color:#b42318">' + item.error + '</span>' : ''}</div>
+          ${item.status === 'uploading' ? `<div class="progress"><span style="width:${Math.round(item.progress * 100)}%"></span></div>` : ''}
         </div>
         <div class="fr-status">${item.status === 'ready' && !sending ? '<button class="icon-btn" title="Retirer">&times;</button>' : ''}</div>`;
       const rm = el.querySelector('button');
@@ -186,31 +209,49 @@
   async function send() {
     if (sending) return;
     $('errBox').classList.add('hidden');
+    const c = ctx();
 
-    if (!zone.clientId) {
-      showError('Cette zone n\'est pas configuree pour recevoir des fichiers (identifiant client manquant). Contactez l\'organisateur.');
-      return;
+    if (!zone.clientId) { showError('Cette zone n\'est pas configuree pour recevoir des fichiers (identifiant client manquant). Contactez l\'organisateur.'); return; }
+
+    let targetFolderId = zone.rootFolderId;
+    if (zone.structured && zone.tree) {
+      if (!c.campus) { showError('Merci de choisir votre campus.'); return; }
+      if (!c.groupe) { showError('Merci de choisir votre groupe.'); return; }
+      if (!c.name.trim()) { showError('Merci d\'indiquer votre nom.'); return; }
+      const entry = zone.tree[c.campus];
+      if (!entry || !entry.g || !entry.g[c.groupe]) { showError('Configuration de groupe introuvable. Contactez l\'organisateur.'); return; }
+    } else {
+      if (zone.fields.name && $('depName') && !$('depName').value.trim()) { showError('Merci d\'indiquer votre nom.'); return; }
     }
-    if (zone.fields.name && $('depName') && !$('depName').value.trim()) {
-      showError('Merci d\'indiquer votre nom.'); return;
-    }
-    if (zone.fields.email && $('depEmail') && !$('depEmail').value.trim()) {
-      showError('Merci d\'indiquer votre email.'); return;
-    }
+    if (zone.fields.email && $('depEmail') && !$('depEmail').value.trim()) { showError('Merci d\'indiquer votre email.'); return; }
 
     sending = true;
     $('sendBtn').disabled = true;
     $('sendLabel').textContent = 'Connexion a Google...';
-
     try {
       await GDrive.init(zone.clientId);
       await GDrive.requestToken();
     } catch (e) {
-      sending = false;
-      $('sendBtn').disabled = false;
+      sending = false; $('sendBtn').disabled = false;
       $('sendLabel').textContent = 'Se connecter a Google et envoyer';
-      showError('Connexion Google impossible : ' + e.message);
-      return;
+      showError('Connexion Google impossible : ' + e.message); return;
+    }
+
+    // Mode structure : creer (une fois) le dossier au nom de l'etudiant
+    if (zone.structured && zone.tree) {
+      const groupFolderId = zone.tree[c.campus].g[c.groupe];
+      if (!studentFolderId) {
+        $('sendLabel').textContent = 'Preparation de votre dossier...';
+        try {
+          studentFolderId = await GDrive.ensureFolder(c.name.trim(), groupFolderId);
+        } catch (e) {
+          sending = false; $('sendBtn').disabled = false;
+          $('sendLabel').textContent = 'Se connecter a Google et envoyer';
+          showError('Impossible de creer votre dossier : ' + e.message + '. Verifiez que le dossier a bien ete partage avec vous.');
+          return;
+        }
+      }
+      targetFolderId = studentFolderId;
     }
 
     $('sendLabel').textContent = 'Envoi en cours...';
@@ -221,14 +262,9 @@
       if (item.status !== 'ready') continue;
       item.status = 'uploading'; item.progress = 0; renderFiles();
       try {
-        await GDrive.upload(item.file, item.newName, zone.folderId, (p) => {
-          item.progress = p; renderFiles();
-        });
+        await GDrive.upload(item.file, item.newName, targetFolderId, (p) => { item.progress = p; renderFiles(); });
         item.status = 'done'; ok++;
-      } catch (e) {
-        item.status = 'error'; item.error = 'Echec de l\'envoi';
-        console.error(e);
-      }
+      } catch (e) { item.status = 'error'; item.error = 'Echec de l\'envoi'; console.error(e); }
       renderFiles();
     }
 
@@ -236,7 +272,8 @@
     if (ok > 0 && files.every((f) => f.status !== 'ready')) {
       $('screenMain').classList.add('hidden');
       $('screenDone').classList.remove('hidden');
-      $('doneCount').textContent = ok + (ok > 1 ? ' fichiers ont' : ' fichier a') + ' bien ete envoye' + (ok > 1 ? 's' : '') + '.';
+      $('doneCount').textContent = ok + (ok > 1 ? ' fichiers ont' : ' fichier a') + ' bien ete envoye' + (ok > 1 ? 's' : '')
+        + (zone.structured ? ' dans votre dossier.' : '.');
     } else {
       $('sendBtn').disabled = false;
       $('sendLabel').textContent = 'Reessayer les fichiers en echec';
@@ -244,24 +281,19 @@
     }
   }
 
-  function showError(msg) {
-    $('errBox').textContent = msg;
-    $('errBox').classList.remove('hidden');
-  }
+  function showError(msg) { $('errBox').textContent = msg; $('errBox').classList.remove('hidden'); }
 
   /* ---------------------------- Liaisons UI ----------------------------- */
   const dz = $('dropzone');
   dz.onclick = () => $('fileInput').click();
   $('fileInput').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
-  ['dragenter', 'dragover'].forEach((ev) =>
-    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
-  ['dragleave', 'drop'].forEach((ev) =>
-    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
+  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
   dz.addEventListener('drop', (e) => { if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
 
   $('sendBtn').onclick = send;
   $('againBtn').onclick = () => {
-    files = []; sending = false;
+    files = []; sending = false; studentFolderId = null;
     $('sendBtn').disabled = false;
     $('sendLabel').textContent = 'Se connecter a Google et envoyer';
     renderFiles();
@@ -269,7 +301,10 @@
     $('screenMain').classList.remove('hidden');
   };
   document.addEventListener('input', (e) => {
-    if (e.target.id === 'depName' || e.target.id === 'depEmail') recomputeNames();
+    if (['depName', 'depEmail', 'depGroup'].includes(e.target.id)) recomputeNames();
+  });
+  document.addEventListener('change', (e) => {
+    if (e.target.id === 'depGroup') recomputeNames();
   });
 
   init();
