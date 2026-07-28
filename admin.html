@@ -43,6 +43,10 @@
     .cell-late { color: #e4013b; font-weight: 700; }
     .cell-no { color: #c3cbe0; }
     .track-summary { font-size: 13px; color: #6b7488; margin: 4px 0 10px; }
+    .track-filters { display: flex; gap: 14px; flex-wrap: wrap; margin: 8px 0 6px; }
+    .track-filters label { font-size: 12px; font-weight: 600; color: #6b7488; display: flex; flex-direction: column; gap: 4px; text-transform: uppercase; letter-spacing: .04em; }
+    .track-filters select { padding: 8px 10px; font-size: 13px; border: 1px solid #e4e8f0; border-radius: 8px; min-width: 170px; font-family: inherit; text-transform: none; letter-spacing: normal; }
+    .track-filters select:focus { outline: none; border-color: #e4013b; box-shadow: 0 0 0 3px rgba(228,1,59,.15); }
   </style>
 </head>
 <body class="locked">
@@ -216,6 +220,14 @@
       <div style="display:flex;justify-content:space-between;align-items:center">
         <h3 id="trackTitle" style="margin:0">Suivi des rendus</h3>
         <button class="btn btn-ghost" id="trackRefresh">Actualiser</button>
+      </div>
+      <div class="track-filters hidden" id="trackFilters">
+        <label>Campus
+          <select id="trackCampus"><option value="">Tous les campus</option></select>
+        </label>
+        <label>Groupe
+          <select id="trackGroup"><option value="">Tous les groupes</option></select>
+        </label>
       </div>
       <div class="track-summary" id="trackSummary"></div>
       <div id="trackBody"></div>
@@ -496,6 +508,7 @@
 
   /* --------------------------- Suivi des rendus ------------------------- */
   let trackingZone = null;
+  let trackRows = [];
   async function showTrack(zone) {
     trackingZone = zone;
     $('trackTitle').textContent = 'Suivi des rendus - ' + zone.name;
@@ -534,14 +547,43 @@
       cell.count++; if (late) cell.late = true; if (!cell.date || f.date > cell.date) cell.date = f.date;
       students[key].cells[matched] = cell;
     });
-    const rows = Object.values(students).sort((a, b) =>
+    trackRows = Object.values(students).sort((a, b) =>
       (a.campus + a.groupe + a.student).localeCompare(b.campus + b.groupe + b.student));
+    setupTrackFilters(zone);
+    renderTrackTable();
+  }
+
+  function setupTrackFilters(zone) {
+    const wrap = $('trackFilters');
+    if (!zone.structured || !(zone.campuses && zone.campuses.length)) { wrap.classList.add('hidden'); return; }
+    wrap.classList.remove('hidden');
+    $('trackCampus').innerHTML = '<option value="">Tous les campus</option>' +
+      zone.campuses.map((c) => '<option value="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + '</option>').join('');
+    $('trackCampus').value = '';
+    populateTrackGroups();
+  }
+  function populateTrackGroups() {
+    const campus = (trackingZone.campuses || []).find((c) => c.name === $('trackCampus').value);
+    const groups = campus ? (campus.groups || []) : [];
+    $('trackGroup').innerHTML = '<option value="">Tous les groupes</option>' +
+      groups.map((g) => '<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>').join('');
+    $('trackGroup').value = '';
+  }
+
+  function renderTrackTable() {
+    const zone = trackingZone;
+    const delivs = (zone.deliverables || []);
+    const cF = $('trackCampus') ? $('trackCampus').value : '';
+    const gF = $('trackGroup') ? $('trackGroup').value : '';
+    const rows = trackRows.filter((r) => (!cF || r.campus === cF) && (!gF || r.groupe === gF));
+    const shownFiles = rows.reduce((s, r) => s + Object.values(r.cells).reduce((a, c) => a + c.count, 0), 0);
+    const filterNote = (cF || gF) ? ' (' + [cF, gF].filter(Boolean).join(' / ') + ')' : '';
 
     $('trackSummary').textContent = rows.length
-      ? (rows.length + (rows.length > 1 ? ' etudiants ont depose' : ' etudiant a depose') + ' - ' + files.length + ' fichier' + (files.length > 1 ? 's' : '') + ' au total.')
-      : 'Aucun depot pour le moment.';
+      ? (rows.length + (rows.length > 1 ? ' etudiants' : ' etudiant') + ' - ' + shownFiles + ' fichier' + (shownFiles > 1 ? 's' : '') + filterNote)
+      : ((cF || gF) ? 'Aucun depot pour ce filtre.' : 'Aucun depot pour le moment.');
 
-    if (!rows.length) { $('trackBody').innerHTML = '<div class="empty">Aucun fichier depose dans cette zone pour l\'instant.</div>'; return; }
+    if (!rows.length) { $('trackBody').innerHTML = '<div class="empty">Aucun fichier a afficher.</div>'; return; }
 
     const cols = delivs.length ? delivs.map((d) => d.name) : ['Fichiers'];
     let html = '<div class="track-scroll"><table class="track-table"><thead><tr>';
@@ -629,6 +671,8 @@
   $('closeLink').onclick = () => $('linkModal').classList.remove('open');
   $('trackClose').onclick = () => $('trackModal').classList.remove('open');
   $('trackRefresh').onclick = () => { if (trackingZone) showTrack(trackingZone); };
+  $('trackCampus').onchange = () => { populateTrackGroups(); renderTrackTable(); };
+  $('trackGroup').onchange = () => renderTrackTable();
   $('exportBtn').onclick = (e) => { e.preventDefault(); exportConfig(); };
   $('importBtn').onclick = (e) => { e.preventDefault(); $('importFile').click(); };
   $('importFile').onchange = (e) => { if (e.target.files[0]) importConfig(e.target.files[0]); };
