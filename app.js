@@ -78,7 +78,10 @@ const ZoneConfig = {
       m: zone.maxMb || 25,
       c: clientId || Store.getClientId(),
       st: !!zone.structured,            // mode arborescence campus/groupe/etudiant
-      tr: zone.tree || null             // { "Nice": { i:"idNice", g:{ "Groupe 1":"id1" } } }
+      tr: zone.tree || null,            // { "Nice": { i:"idNice", g:{ "Groupe 1":"id1" } } }
+      dl: (zone.deliverables && zone.deliverables.length)
+        ? zone.deliverables.map((d) => ({ n: d.name, x: d.deadline || '' }))
+        : null                          // livrables : [{ n:nom, x:deadline ISO }]
     };
     return Util.b64encode(JSON.stringify(payload));
   },
@@ -95,7 +98,9 @@ const ZoneConfig = {
       maxMb: p.m || 25,
       clientId: p.c || '',
       structured: !!p.st,
-      tree: p.tr || null
+      tree: p.tr || null,
+      deliverables: (p.dl || []).map((d) => ({ name: d.n, deadline: d.x || '' })),
+      hasDeliverables: !!(p.dl && p.dl.length)
     };
   },
 
@@ -122,6 +127,8 @@ const Renamer = {
     ['{groupe}', 'Groupe'],
     ['{name}', "Nom de l'etudiant / deposant"],
     ['{email}', 'Email du deposant'],
+    ['{livrable}', 'Nom du livrable'],
+    ['{retard}', 'Marqueur EN-RETARD si hors delai'],
     ['{original}', "Nom d'origine du fichier"],
     ['{ext}', 'Extension'],
     ['{counter}', 'Numero sequentiel (001...)'],
@@ -149,6 +156,8 @@ const Renamer = {
       '{groupe}': Util.slug(ctx.groupe),
       '{name}': Util.slug(ctx.name),
       '{email}': Util.slug(ctx.email),
+      '{livrable}': Util.slug(ctx.livrable),
+      '{retard}': ctx.late ? 'EN-RETARD_' : '',
       '{original}': Util.slug(base),
       '{ext}': ext,
       '{counter}': Util.pad(ctx.counter || 1),
@@ -156,7 +165,7 @@ const Renamer = {
     };
 
     let out = (template || '{datetime}_{original}').replace(
-      /\{(date|time|datetime|year|month|day|zone|campus|groupe|name|email|original|ext|counter|rand)\}/g,
+      /\{(date|time|datetime|year|month|day|zone|campus|groupe|name|email|livrable|retard|original|ext|counter|rand)\}/g,
       (m) => (map[m] !== undefined ? map[m] : '')
     );
 

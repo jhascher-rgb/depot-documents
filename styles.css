@@ -306,6 +306,43 @@ textarea { resize: vertical; min-height: 64px; }
 
 .select-field { margin-bottom: 16px; }
 
+/* ----------------------- Editeur de livrables (admin) ------------------- */
+.deliv-edit-row {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+}
+.deliv-edit-row .dv-name { flex: 2 1 auto; }
+.deliv-edit-row .dv-date { flex: 1 1 180px; }
+.deliv-edit-row input[type=datetime-local] {
+  padding: 10px 11px; font-size: 13px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); font-family: inherit; width: 100%;
+}
+
+/* ----------------------- Blocs livrables (depot) ------------------------ */
+.deliv-block {
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 14px 16px; margin-bottom: 12px; background: #fff;
+}
+.deliv-block .deliv-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.deliv-block .deliv-name { font-weight: 600; font-size: 15px; }
+.deliv-deadline { font-size: 12.5px; font-weight: 600; }
+.deliv-deadline.ok { color: var(--muted); }
+.deliv-deadline.late { color: var(--danger); }
+.deliv-add {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--brand);
+  border: 1px dashed #d7b3c0; border-radius: 8px; padding: 8px 12px; background: var(--brand-soft);
+}
+.deliv-add:hover { border-color: var(--brand); }
+.deliv-block.drag { border-color: var(--brand); background: var(--brand-soft); }
+
+.badge-late {
+  display: inline-block; font-size: 11px; font-weight: 700; color: #fff;
+  background: var(--danger); border-radius: 20px; padding: 2px 8px; margin-left: 6px;
+}
+
 .hidden { display: none !important; }
 
 @media (max-width: 560px) {

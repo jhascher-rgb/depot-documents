@@ -96,7 +96,20 @@
           <button class="btn btn-ghost" id="addCampus" style="margin-top:4px">+ Ajouter un campus</button>
         </div>
         <div class="notice notice-ok" style="font-size:13px">
-          &#128193; Chaque etudiant deposera plusieurs fichiers dans un dossier <b>a son nom</b>, range dans son groupe.
+          &#128193; Chaque etudiant deposera ses fichiers dans un dossier <b>a son nom</b>, range dans son groupe.
+        </div>
+      </div>
+
+      <!-- Livrables -->
+      <div class="toggle-line">
+        <label class="check"><input type="checkbox" id="zHasDeliv"> Definir des <b>livrables attendus</b> (avec deadline)</label>
+      </div>
+      <div id="delivSection" class="hidden">
+        <div class="field">
+          <label>Livrables et deadlines</label>
+          <div class="sub" style="margin-bottom:8px">Chaque livrable devient un emplacement de depot. La deadline est indicative : le depot reste possible ensuite mais est marque &laquo; en retard &raquo;. Laissez la date vide pour aucune deadline.</div>
+          <div id="delivEditor"></div>
+          <button class="btn btn-ghost" id="addDeliv" style="margin-top:4px">+ Ajouter un livrable</button>
         </div>
       </div>
 
@@ -169,6 +182,7 @@
   let zones = Store.getZones();
   let editingId = null;
   let mCampuses = [];      // [{ name, groupsText }] edition en cours
+  let mDeliverables = [];  // [{ name, deadline }] edition en cours
   let buildingZoneId = null;
 
   function saveAll() { Store.saveZones(zones); }
@@ -199,6 +213,7 @@
       } else {
         meta = z.template + ' &middot; dossier ' + (z.rootFolderId ? escapeHtml(z.rootFolderId.slice(0, 10)) + '...' : 'non defini');
       }
+      if (z.deliverables && z.deliverables.length) meta += ' &middot; ' + z.deliverables.length + ' livrable' + (z.deliverables.length > 1 ? 's' : '');
       const el = document.createElement('div');
       el.className = 'zone-item';
       el.innerHTML = `
@@ -246,11 +261,37 @@
     });
   }
 
+  /* --------------------------- Editeur livrables ------------------------ */
+  function renderDelivEditor() {
+    const box = $('delivEditor');
+    box.innerHTML = '';
+    mDeliverables.forEach((d, i) => {
+      const row = document.createElement('div');
+      row.className = 'deliv-edit-row';
+      row.innerHTML = `
+        <input class="dv-name" type="text" placeholder="Nom du livrable (ex : Note d'intention)" value="${escapeHtml(d.name)}">
+        <input class="dv-date" type="datetime-local" value="${escapeHtml(d.deadline || '')}">
+        <button class="mini-btn" title="Retirer">&times;</button>`;
+      row.querySelector('.dv-name').oninput = (e) => { mDeliverables[i].name = e.target.value; };
+      row.querySelector('.dv-date').oninput = (e) => { mDeliverables[i].deadline = e.target.value; };
+      row.querySelector('.mini-btn').onclick = () => { mDeliverables.splice(i, 1); renderDelivEditor(); };
+      box.appendChild(row);
+    });
+  }
+  function collectDeliverables() {
+    return mDeliverables
+      .map((d) => ({ name: (d.name || '').trim(), deadline: d.deadline || '' }))
+      .filter((d) => d.name);
+  }
+
   /* --------------------------- Modale de zone --------------------------- */
   function toggleStruct(on) {
     $('structSection').classList.toggle('hidden', !on);
     $('fieldsFlat').classList.toggle('hidden', on);
     $('fieldsStruct').classList.toggle('hidden', !on);
+  }
+  function toggleDeliv(on) {
+    $('delivSection').classList.toggle('hidden', !on);
   }
 
   function openModal(zone) {
@@ -272,6 +313,15 @@
       : [{ name: 'Nice', groupsText: '' }, { name: 'Bordeaux', groupsText: '' }];
     renderCampusEditor();
     toggleStruct(structured);
+
+    const hasDeliv = zone ? !!(zone.deliverables && zone.deliverables.length) : false;
+    $('zHasDeliv').checked = hasDeliv;
+    mDeliverables = (zone && zone.deliverables && zone.deliverables.length)
+      ? zone.deliverables.map((d) => ({ name: d.name, deadline: d.deadline || '' }))
+      : [{ name: '', deadline: '' }];
+    renderDelivEditor();
+    toggleDeliv(hasDeliv);
+
     updatePreview();
     $('modal').classList.add('open');
   }
@@ -323,6 +373,9 @@
       if (!campuses.some((c) => c.groups.length)) { alert('Ajoutez au moins un groupe.'); return; }
     }
 
+    const deliverables = $('zHasDeliv').checked ? collectDeliverables() : [];
+    if ($('zHasDeliv').checked && !deliverables.length) { alert('Ajoutez au moins un livrable, ou decochez l\'option.'); return; }
+
     const emailWanted = structured ? $('zFieldEmail2').checked : $('zFieldEmail').checked;
     const prev = zones.find((z) => z.id === editingId);
     const data = {
@@ -332,6 +385,7 @@
       rootFolderId: folder,
       structured,
       campuses,
+      deliverables,
       // conserve l'arborescence deja creee si le dossier racine n'a pas change
       tree: (prev && prev.rootFolderId === folder) ? (prev.tree || null) : null,
       template: $('zTemplate').value.trim() || '{name}_{original}',
@@ -454,7 +508,9 @@
   $('cancelZone').onclick = closeModal;
   $('saveZone').onclick = saveZone;
   $('zStructured').onchange = (e) => toggleStruct(e.target.checked);
+  $('zHasDeliv').onchange = (e) => toggleDeliv(e.target.checked);
   $('addCampus').onclick = () => { mCampuses.push({ name: '', groupsText: '' }); renderCampusEditor(); };
+  $('addDeliv').onclick = () => { mDeliverables.push({ name: '', deadline: '' }); renderDelivEditor(); };
   $('zTemplate').addEventListener('input', updatePreview);
   $('zName').addEventListener('input', updatePreview);
   $('buildClose').onclick = () => $('buildModal').classList.remove('open');
