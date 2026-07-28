@@ -32,6 +32,17 @@
     .auth-err { color: #b42318; background: #fdecec; border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-bottom: 10px; }
     .auth-forgot { display: inline-block; margin-top: 14px; font-size: 12.5px; color: #6b7488; text-decoration: none; }
     .auth-forgot:hover { text-decoration: underline; }
+    .modal-wide { max-width: 880px; }
+    .track-scroll { overflow-x: auto; margin-top: 6px; }
+    .track-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .track-table th, .track-table td { border: 1px solid #e4e8f0; padding: 7px 9px; text-align: center; white-space: nowrap; }
+    .track-table th { background: #f6f7fb; font-weight: 600; position: sticky; top: 0; }
+    .track-table td.stu { text-align: left; font-weight: 600; }
+    .track-table td.meta { text-align: left; color: #6b7488; }
+    .cell-ok { color: #10b981; font-weight: 700; }
+    .cell-late { color: #e4013b; font-weight: 700; }
+    .cell-no { color: #c3cbe0; }
+    .track-summary { font-size: 13px; color: #6b7488; margin: 4px 0 10px; }
   </style>
 </head>
 <body class="locked">
@@ -199,6 +210,21 @@
     </div>
   </div>
 
+  <!-- Modale suivi des rendus -->
+  <div class="modal-bg" id="trackModal">
+    <div class="modal modal-wide">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3 id="trackTitle" style="margin:0">Suivi des rendus</h3>
+        <button class="btn btn-ghost" id="trackRefresh">Actualiser</button>
+      </div>
+      <div class="track-summary" id="trackSummary"></div>
+      <div id="trackBody"></div>
+      <div class="modal-foot">
+        <button class="btn btn-primary" id="trackClose">Fermer</button>
+      </div>
+    </div>
+  </div>
+
   <script>
   /* -------------------- Protection par mot de passe --------------------- */
   (function () {
@@ -298,10 +324,12 @@
           <div class="zi-meta">${meta}</div>
         </div>
         <div class="zi-actions">
+          <button class="icon-btn" title="Suivi des rendus" data-act="track">&#128202;</button>
           <button class="icon-btn" title="Lien de depot" data-act="link">&#128279;</button>
           <button class="icon-btn" title="Modifier" data-act="edit">&#9998;</button>
           <button class="icon-btn" title="Supprimer" data-act="del">&#128465;</button>
         </div>`;
+      el.querySelector('[data-act=track]').onclick = () => showTrack(z);
       el.querySelector('[data-act=link]').onclick = () => showLink(z);
       el.querySelector('[data-act=edit]').onclick = () => openModal(z);
       el.querySelector('[data-act=del]').onclick = () => {
@@ -466,6 +494,81 @@
     $('linkModal').classList.add('open');
   }
 
+  /* --------------------------- Suivi des rendus ------------------------- */
+  let trackingZone = null;
+  async function showTrack(zone) {
+    trackingZone = zone;
+    $('trackTitle').textContent = 'Suivi des rendus - ' + zone.name;
+    $('trackSummary').textContent = '';
+    $('trackBody').innerHTML = '<div class="empty">Chargement...</div>';
+    $('trackModal').classList.add('open');
+    const gw = Store.getGatewayUrl();
+    if (!gw) { $('trackBody').innerHTML = '<div class="notice notice-err">Aucune passerelle configuree.</div>'; return; }
+    if (!zone.rootFolderId) { $('trackBody').innerHTML = '<div class="notice notice-err">Dossier racine non defini.</div>'; return; }
+    let data;
+    try {
+      const res = await fetch(gw + '?action=list&root=' + encodeURIComponent(zone.rootFolderId));
+      data = await res.json();
+    } catch (e) { $('trackBody').innerHTML = '<div class="notice notice-err">Passerelle injoignable.</div>'; return; }
+    if (!data || !data.ok) { $('trackBody').innerHTML = '<div class="notice notice-err">Erreur : ' + escapeHtml((data && data.error) || 'inconnue') + '</div>'; return; }
+    renderTrack(zone, data.files || []);
+  }
+
+  function renderTrack(zone, files) {
+    const delivs = (zone.deliverables || []);
+    const delivSlugs = delivs.map((d) => ({ name: d.name, slug: Util.slug(d.name) }))
+      .filter((d) => d.slug).sort((a, b) => b.slug.length - a.slug.length);
+    const students = {};
+    files.forEach((f) => {
+      let campus = '', groupe = '', student = '';
+      if (zone.structured) { campus = f.path[0] || ''; groupe = f.path[1] || ''; student = f.path[2] || f.path[f.path.length - 1] || ''; }
+      else { student = f.path[f.path.length - 1] || '(racine)'; }
+      if (!student) return;
+      const slugName = Util.slug(f.name);
+      let matched = delivs.length ? '(autre)' : 'Fichiers';
+      for (const d of delivSlugs) { if (slugName.indexOf(d.slug) >= 0) { matched = d.name; break; } }
+      const late = /EN-?RETARD/i.test(f.name);
+      const key = campus + '|' + groupe + '|' + student;
+      if (!students[key]) students[key] = { campus, groupe, student, cells: {} };
+      const cell = students[key].cells[matched] || { count: 0, late: false, date: null };
+      cell.count++; if (late) cell.late = true; if (!cell.date || f.date > cell.date) cell.date = f.date;
+      students[key].cells[matched] = cell;
+    });
+    const rows = Object.values(students).sort((a, b) =>
+      (a.campus + a.groupe + a.student).localeCompare(b.campus + b.groupe + b.student));
+
+    $('trackSummary').textContent = rows.length
+      ? (rows.length + (rows.length > 1 ? ' etudiants ont depose' : ' etudiant a depose') + ' - ' + files.length + ' fichier' + (files.length > 1 ? 's' : '') + ' au total.')
+      : 'Aucun depot pour le moment.';
+
+    if (!rows.length) { $('trackBody').innerHTML = '<div class="empty">Aucun fichier depose dans cette zone pour l\'instant.</div>'; return; }
+
+    const cols = delivs.length ? delivs.map((d) => d.name) : ['Fichiers'];
+    let html = '<div class="track-scroll"><table class="track-table"><thead><tr>';
+    if (zone.structured) html += '<th>Campus</th><th>Groupe</th>';
+    html += '<th>Etudiant</th>';
+    cols.forEach((c) => html += '<th>' + escapeHtml(c) + '</th>');
+    html += '</tr></thead><tbody>';
+    rows.forEach((r) => {
+      html += '<tr>';
+      if (zone.structured) html += '<td class="meta">' + escapeHtml(r.campus) + '</td><td class="meta">' + escapeHtml(r.groupe) + '</td>';
+      html += '<td class="stu">' + escapeHtml(r.student) + '</td>';
+      cols.forEach((c) => {
+        const cell = r.cells[c];
+        if (!cell) { html += '<td class="cell-no">&mdash;</td>'; return; }
+        const cnt = cell.count > 1 ? ' (' + cell.count + ')' : '';
+        html += cell.late
+          ? '<td class="cell-late" title="En retard">&#9888;&#65039; retard' + cnt + '</td>'
+          : '<td class="cell-ok">&#10003;' + cnt + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    const hasAutre = rows.some((r) => r.cells['(autre)']);
+    if (hasAutre && delivs.length) html += '<div class="track-summary">Remarque : certains fichiers n\'ont pas pu etre rattaches a un livrable (renommage non standard).</div>';
+    $('trackBody').innerHTML = html;
+  }
+
   /* ---------------------------- Import/export --------------------------- */
   function exportConfig() {
     const blob = new Blob([JSON.stringify({ gateway: Store.getGatewayUrl(), zones }, null, 2)], { type: 'application/json' });
@@ -524,10 +627,12 @@
     setTimeout(() => ($('copyLink').textContent = 'Copier'), 1500);
   };
   $('closeLink').onclick = () => $('linkModal').classList.remove('open');
+  $('trackClose').onclick = () => $('trackModal').classList.remove('open');
+  $('trackRefresh').onclick = () => { if (trackingZone) showTrack(trackingZone); };
   $('exportBtn').onclick = (e) => { e.preventDefault(); exportConfig(); };
   $('importBtn').onclick = (e) => { e.preventDefault(); $('importFile').click(); };
   $('importFile').onchange = (e) => { if (e.target.files[0]) importConfig(e.target.files[0]); };
-  ['modal', 'linkModal'].forEach((id) => {
+  ['modal', 'linkModal', 'trackModal'].forEach((id) => {
     $(id).addEventListener('click', (e) => { if (e.target === $(id)) $(id).classList.remove('open'); });
   });
 
