@@ -175,22 +175,27 @@ const Gateway = {
 
   // Envoie un fichier deja encode en base64 vers la passerelle.
   // Content-Type text/plain => requete "simple" (pas de preflight CORS).
-  send(url, payload, onProgress) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', url);
-      xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
-      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
-      xhr.onload = () => {
-        let r = null;
-        try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
-        if (r && r.ok) return resolve(r);
-        if (r && r.error) return reject(new Error(r.error));
-        if (xhr.status >= 200 && xhr.status < 300) return resolve({ ok: true });
-        reject(new Error('Reponse inattendue de la passerelle (' + xhr.status + ').'));
-      };
-      xhr.onerror = () => reject(new Error('Passerelle injoignable. Verifiez l\'URL et le deploiement du script.'));
-      xhr.send(JSON.stringify(payload));
-    });
+  // On utilise fetch (et non XHR) car il suit correctement la redirection
+  // 302 d'Apps Script vers script.googleusercontent.com.
+  async send(url, payload, onProgress) {
+    if (onProgress) onProgress(0.4);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+        redirect: 'follow'
+      });
+    } catch (e) {
+      throw new Error('Passerelle injoignable. Verifiez l\'URL et le deploiement du script.');
+    }
+    if (onProgress) onProgress(0.9);
+    let r = null;
+    try { r = await res.json(); } catch (e) { r = null; }
+    if (r && r.ok) { if (onProgress) onProgress(1); return r; }
+    if (r && r.error) throw new Error(r.error);
+    if (res.ok) { if (onProgress) onProgress(1); return { ok: true }; }
+    throw new Error('Reponse inattendue de la passerelle (' + res.status + ').');
   }
 };
