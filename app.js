@@ -1,42 +1,29 @@
 /* ============================================================================
-   DepotDoc - logique partagee
+   DepotDoc - logique partagee (version passerelle Apps Script)
    - Moteur de renommage
    - Encodage / decodage de la configuration des zones dans l'URL
-   - Authentification Google (Google Identity Services)
-   - Upload vers Google Drive (API multipart)
-   Aucune dependance, aucun serveur : tout s'execute dans le navigateur.
+   - Envoi des fichiers vers la passerelle Apps Script (qui ecrit dans le Drive)
+   Aucun compte Google requis cote deposant. Tout s'execute dans le navigateur.
    ==========================================================================*/
 
 /* ----------------------------- Stockage local ---------------------------- */
 const Store = {
   KEY_ZONES: 'depotdoc.zones',
-  KEY_CLIENT: 'depotdoc.clientId',
+  KEY_GW: 'depotdoc.gateway',
 
-  getClientId() {
-    return localStorage.getItem(this.KEY_CLIENT) || '';
-  },
-  setClientId(id) {
-    localStorage.setItem(this.KEY_CLIENT, (id || '').trim());
-  },
+  getGatewayUrl() { return localStorage.getItem(this.KEY_GW) || ''; },
+  setGatewayUrl(u) { localStorage.setItem(this.KEY_GW, (u || '').trim()); },
   getZones() {
-    try {
-      return JSON.parse(localStorage.getItem(this.KEY_ZONES)) || [];
-    } catch (e) {
-      return [];
-    }
+    try { return JSON.parse(localStorage.getItem(this.KEY_ZONES)) || []; }
+    catch (e) { return []; }
   },
-  saveZones(zones) {
-    localStorage.setItem(this.KEY_ZONES, JSON.stringify(zones));
-  }
+  saveZones(zones) { localStorage.setItem(this.KEY_ZONES, JSON.stringify(zones)); }
 };
 
 /* ---------------------------- Utilitaires ------------------------------- */
 const Util = {
-  uid() {
-    return 'z' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-  },
+  uid() { return 'z' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4); },
 
-  // Encodage compatible URL de l'UTF-8 en base64 (gere les accents)
   b64encode(str) {
     return btoa(unescape(encodeURIComponent(str)))
       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -46,42 +33,44 @@ const Util = {
     while (str.length % 4) str += '=';
     return decodeURIComponent(escape(atob(str)));
   },
+  pad(n, len = 3) { return String(n).padStart(len, '0'); },
 
-  pad(n, len = 3) {
-    return String(n).padStart(len, '0');
-  },
-
-  // Nettoie un fragment de nom de fichier (retire les caracteres interdits)
+  // Nettoie un fragment de NOM DE FICHIER (retire les caracteres interdits)
   slug(s) {
     return (s || '')
-      .normalize('NFD').replace(/[̀-ͯ]/g, '')       // accents
-      .replace(/[\\/:*?"<>|]/g, '')                            // interdits
-      .replace(/\s+/g, '-')                                    // espaces
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/\s+/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '')
       .trim();
+  },
+  // Nettoie un NOM DE DOSSIER : garde les espaces/accents, retire l'interdit
+  folderName(s) {
+    return (s || '').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
   }
 };
 
 /* --------------------------- Config des zones --------------------------- */
-// Une zone : { id, name, description, folderId, template, fields:{name,email}, maxMb }
+// zone : { id, name, description, rootFolderId, template, structured,
+//          campuses:[{name,groups:[]}], deliverables:[{name,deadline}],
+//          fields:{name,email}, maxMb }
 
 const ZoneConfig = {
-  // Version compacte encodee dans le lien de depot
-  encode(zone, clientId) {
+  encode(zone, gatewayUrl) {
     const payload = {
       n: zone.name,
       d: zone.description || '',
-      f: zone.rootFolderId || zone.folderId,
+      f: zone.rootFolderId || '',
       t: zone.template,
-      r: { n: !!(zone.fields && zone.fields.name), e: !!(zone.fields && zone.fields.email) },
-      m: zone.maxMb || 25,
-      c: clientId || Store.getClientId(),
-      st: !!zone.structured,            // mode arborescence campus/groupe/etudiant
-      tr: zone.tree || null,            // { "Nice": { i:"idNice", g:{ "Groupe 1":"id1" } } }
+      m: zone.maxMb || 50,
+      st: !!zone.structured,
+      cp: (zone.structured && zone.campuses)
+        ? zone.campuses.map((c) => ({ n: c.name, g: c.groups || [] })) : null,
       dl: (zone.deliverables && zone.deliverables.length)
-        ? zone.deliverables.map((d) => ({ n: d.name, x: d.deadline || '' }))
-        : null                          // livrables : [{ n:nom, x:deadline ISO }]
+        ? zone.deliverables.map((d) => ({ n: d.name, x: d.deadline || '' })) : null,
+      r: { n: !!(zone.fields && zone.fields.name), e: !!(zone.fields && zone.fields.email) },
+      g: gatewayUrl || Store.getGatewayUrl()
     };
     return Util.b64encode(JSON.stringify(payload));
   },
@@ -91,31 +80,25 @@ const ZoneConfig = {
     return {
       name: p.n,
       description: p.d || '',
-      rootFolderId: p.f,
-      folderId: p.f,
+      rootFolderId: p.f || '',
       template: p.t,
-      fields: { name: !!(p.r && p.r.n), email: !!(p.r && p.r.e) },
-      maxMb: p.m || 25,
-      clientId: p.c || '',
+      maxMb: p.m || 50,
       structured: !!p.st,
-      tree: p.tr || null,
+      campuses: (p.cp || []).map((c) => ({ name: c.n, groups: c.g || [] })),
       deliverables: (p.dl || []).map((d) => ({ name: d.n, deadline: d.x || '' })),
-      hasDeliverables: !!(p.dl && p.dl.length)
+      hasDeliverables: !!(p.dl && p.dl.length),
+      fields: { name: !!(p.r && p.r.n), email: !!(p.r && p.r.e) },
+      gatewayUrl: p.g || ''
     };
   },
 
-  // Construit le lien public de depot
-  depositLink(zone, clientId) {
+  depositLink(zone, gatewayUrl) {
     const base = location.href.replace(/admin\.html.*$/, '').replace(/#.*$/, '');
-    return base + 'index.html#z=' + this.encode(zone, clientId);
+    return base + 'index.html#z=' + this.encode(zone, gatewayUrl);
   }
 };
 
 /* --------------------------- Moteur de renommage ------------------------ */
-// Variables disponibles dans un modele :
-//   {date} {time} {datetime} {year} {month} {day}
-//   {zone} {name} {email} {original} {ext} {counter} {rand}
-
 const Renamer = {
   variables: [
     ['{date}', 'Date du depot (2026-07-28)'],
@@ -168,147 +151,46 @@ const Renamer = {
       /\{(date|time|datetime|year|month|day|zone|campus|groupe|name|email|livrable|retard|original|ext|counter|rand)\}/g,
       (m) => (map[m] !== undefined ? map[m] : '')
     );
-
-    // Nettoyage final : retire les separateurs orphelins dus aux champs vides
     out = out.replace(/[_-]{2,}/g, '_').replace(/^[_-]+|[_-]+$/g, '');
-    if (ext && !out.toLowerCase().endsWith('.' + ext.toLowerCase())) {
-      out += '.' + ext;
-    }
+    if (ext && !out.toLowerCase().endsWith('.' + ext.toLowerCase())) out += '.' + ext;
     return out || ctx.original;
   }
 };
 
-/* ----------------------- Authentification Google ------------------------ */
-const GDrive = {
-  _tokenClient: null,
-  _token: null,
-  SCOPE: 'https://www.googleapis.com/auth/drive.file',
-
-  init(clientId) {
+/* ----------------------- Envoi vers la passerelle ----------------------- */
+const Gateway = {
+  fileToBase64(file) {
     return new Promise((resolve, reject) => {
-      if (!window.google || !google.accounts) {
-        return reject(new Error('Bibliotheque Google non chargee.'));
-      }
-      this._tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: this.SCOPE,
-        callback: () => {} // remplace a la demande
-      });
-      resolve();
-    });
-  },
-
-  // Demande un jeton d'acces (ouvre la fenetre Google si necessaire)
-  requestToken() {
-    return new Promise((resolve, reject) => {
-      if (!this._tokenClient) return reject(new Error('Client non initialise.'));
-      this._tokenClient.callback = (resp) => {
-        if (resp.error) return reject(new Error(resp.error));
-        this._token = resp.access_token;
-        resolve(this._token);
+      const r = new FileReader();
+      r.onload = () => {
+        const bytes = new Uint8Array(r.result);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        resolve(btoa(bin));
       };
-      this._tokenClient.requestAccessToken({ prompt: this._token ? '' : 'consent' });
+      r.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+      r.readAsArrayBuffer(file);
     });
   },
 
-  signOut() {
-    if (this._token) {
-      try { google.accounts.oauth2.revoke(this._token, () => {}); } catch (e) {}
-    }
-    this._token = null;
-  },
-
-  isSignedIn() {
-    return !!this._token;
-  },
-
-  _authHeaders(json) {
-    const h = { 'Authorization': 'Bearer ' + this._token };
-    if (json) h['Content-Type'] = 'application/json';
-    return h;
-  },
-
-  // Cherche un sous-dossier par nom dans un dossier parent.
-  // Note : sous le perimetre drive.file, ne retourne que les dossiers
-  // crees par cette application pour l'utilisateur courant.
-  async findFolder(name, parentId) {
-    const safe = String(name).replace(/'/g, "\\'");
-    let q = "mimeType='application/vnd.google-apps.folder' and trashed=false and name='" + safe + "'";
-    if (parentId) q += " and '" + parentId + "' in parents";
-    const url = 'https://www.googleapis.com/drive/v3/files?q=' +
-      encodeURIComponent(q) + '&fields=files(id,name)&spaces=drive';
-    const r = await fetch(url, { headers: this._authHeaders(false) });
-    if (!r.ok) throw new Error('Recherche de dossier (' + r.status + ')');
-    const data = await r.json();
-    return (data.files && data.files.length) ? data.files[0].id : null;
-  },
-
-  async createFolder(name, parentId) {
-    const meta = { name: String(name), mimeType: 'application/vnd.google-apps.folder' };
-    if (parentId) meta.parents = [parentId];
-    const r = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
-      method: 'POST', headers: this._authHeaders(true), body: JSON.stringify(meta)
-    });
-    if (!r.ok) throw new Error('Creation de dossier (' + r.status + ') : ' + await r.text());
-    return (await r.json()).id;
-  },
-
-  // Retourne l'id du dossier existant, sinon le cree.
-  async ensureFolder(name, parentId) {
-    let found = null;
-    try { found = await this.findFolder(name, parentId); } catch (e) { found = null; }
-    if (found) return found;
-    return await this.createFolder(name, parentId);
-  },
-
-  // Upload d'un fichier avec suivi de progression
-  upload(file, filename, folderId, onProgress) {
+  // Envoie un fichier deja encode en base64 vers la passerelle.
+  // Content-Type text/plain => requete "simple" (pas de preflight CORS).
+  send(url, payload, onProgress) {
     return new Promise((resolve, reject) => {
-      const metadata = { name: filename };
-      if (folderId) metadata.parents = [folderId];
-
-      const boundary = '-------depotdoc' + Date.now();
-      const delim = '\r\n--' + boundary + '\r\n';
-      const close = '\r\n--' + boundary + '--';
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        const contentType = file.type || 'application/octet-stream';
-        const bytes = new Uint8Array(reader.result);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        const base64 = btoa(binary);
-
-        const body =
-          delim +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(metadata) +
-          delim +
-          'Content-Type: ' + contentType + '\r\n' +
-          'Content-Transfer-Encoding: base64\r\n\r\n' +
-          base64 +
-          close;
-
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST',
-          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink');
-        xhr.setRequestHeader('Authorization', 'Bearer ' + this._token);
-        xhr.setRequestHeader('Content-Type', 'multipart/related; boundary=' + boundary);
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(JSON.parse(xhr.responseText));
-          } else {
-            reject(new Error('Erreur Drive ' + xhr.status + ' : ' + xhr.responseText));
-          }
-        };
-        xhr.onerror = () => reject(new Error('Erreur reseau pendant l\'envoi.'));
-        xhr.send(body);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+      xhr.onload = () => {
+        let r = null;
+        try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
+        if (r && r.ok) return resolve(r);
+        if (r && r.error) return reject(new Error(r.error));
+        if (xhr.status >= 200 && xhr.status < 300) return resolve({ ok: true });
+        reject(new Error('Reponse inattendue de la passerelle (' + xhr.status + ').'));
       };
-      reader.onerror = () => reject(new Error('Lecture du fichier impossible.'));
-      reader.readAsArrayBuffer(file);
+      xhr.onerror = () => reject(new Error('Passerelle injoignable. Verifiez l\'URL et le deploiement du script.'));
+      xhr.send(JSON.stringify(payload));
     });
   }
 };

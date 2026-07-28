@@ -1,122 +1,86 @@
 # DepotDoc — application de dépôt de documents
 
-Application web **sans serveur** qui permet de créer des zones de dépôt, de **renommer automatiquement** les fichiers reçus et de les **envoyer directement dans un dossier Google Drive**. Tout fonctionne dans le navigateur — hébergement **100 % gratuit** sur GitHub Pages.
+Application web qui permet de créer des zones de dépôt, de **renommer automatiquement** les fichiers reçus et de les **ranger dans un dossier Google Drive** en créant l'arborescence (campus / groupe / étudiant, livrables…). L'interface est hébergée gratuitement sur **GitHub Pages** ; l'enregistrement dans le Drive passe par une **passerelle Google Apps Script** déployée sur votre compte.
 
-## Aperçu
+Avantage clé de cette approche : **les déposants n'ont pas besoin de compte Google**, et les dossiers se créent tout seuls, sans doublon.
 
-- **`admin.html`** — le tableau de bord privé où vous configurez vos zones et générez les liens à partager.
-- **`index.html`** — la page publique de dépôt, ouverte par les déposants via un lien. Aucune configuration de leur côté.
-- **`app.js` / `styles.css`** — logique et style partagés.
+## Les fichiers
 
-Chaque zone possède : un nom, une description, un **dossier Drive de destination**, un **modèle de renommage** personnalisable, et des champs facultatifs (nom / email du déposant).
-
----
-
-## 1. Déploiement sur GitHub Pages (gratuit)
-
-1. Créez un compte sur [github.com](https://github.com) si besoin.
-2. Créez un nouveau dépôt (**New repository**), par exemple `depot-documents`, en **Public**.
-3. Téléversez les fichiers **ainsi que le dossier `assets/`** (qui contient les logos `sup-photo.png` et `campus-11-arts.png`) : bouton **Add file → Upload files**, glissez l'ensemble, puis **Commit changes**. Les fichiers à envoyer sont : `index.html`, `admin.html`, `app.js`, `styles.css`, `README.md` et le dossier `assets/`.
-4. Allez dans **Settings → Pages**.
-5. Sous *Build and deployment*, choisissez **Source : Deploy from a branch**, branche **main**, dossier **/ (root)**, puis **Save**.
-6. Au bout d'une minute, votre site est en ligne à une adresse du type :
-   `https://VOTRE-COMPTE.github.io/depot-documents/`
-
-Le tableau de bord est alors accessible à :
-`https://VOTRE-COMPTE.github.io/depot-documents/admin.html`
-
-> **Note :** notez bien cette adresse `.github.io`, elle sert à l'étape suivante.
+- **`admin.html`** — tableau de bord privé : zones, campus/groupes, livrables, liens à partager.
+- **`index.html`** — page publique de dépôt, ouverte par un lien.
+- **`app.js` / `styles.css`** — logique et style.
+- **`Code.gs`** — le script de la passerelle, à déployer sur Google Apps Script.
 
 ---
 
-## 2. Configurer l'accès à Google Drive (une seule fois)
+## 1. Déployer la passerelle (Apps Script) — une seule fois
 
-Pour que les fichiers puissent être envoyés vers Drive, il faut créer un **identifiant client OAuth** gratuit dans Google Cloud. Cela prend ~10 minutes.
+C'est ce qui autorise l'écriture dans **votre** Drive.
 
-### a. Créer un projet
-1. Ouvrez [console.cloud.google.com](https://console.cloud.google.com).
-2. En haut, **Select a project → New project**. Donnez-lui un nom (ex. `DepotDoc`) et créez-le.
-
-### b. Activer l'API Google Drive
-1. Menu **APIs & Services → Library**.
-2. Cherchez **Google Drive API** et cliquez **Enable**.
-
-### c. Écran de consentement
-1. **APIs & Services → OAuth consent screen**.
-2. Type **External**, puis **Create**.
-3. Renseignez le nom de l'application, votre email de support et votre email de contact. Enregistrez.
-4. À l'étape *Scopes*, vous pouvez continuer sans rien ajouter.
-5. À l'étape *Test users*, ajoutez les adresses Google qui déposeront des fichiers **tant que l'application est en mode Test** (voir la note plus bas).
-
-### d. Créer l'identifiant client
-1. **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
-2. Type d'application : **Web application**.
-3. Sous **Authorized JavaScript origins**, ajoutez **exactement** l'origine de votre site, sans slash final :
-   `https://VOTRE-COMPTE.github.io`
-4. Cliquez **Create**. Copiez le **Client ID** affiché (il ressemble à `1234...-abcd.apps.googleusercontent.com`).
-
-### e. Renseigner l'identifiant dans l'application
-1. Ouvrez `admin.html` de votre site.
-2. Collez le **Client ID** dans le champ *Identifiant client OAuth* et **Enregistrez**.
-
-> **Mode Test vs Publication :** en mode « Test », seuls les comptes Google ajoutés en *Test users* peuvent déposer. Pour ouvrir à tout le monde, revenez à *OAuth consent screen* et cliquez **Publish app**. Comme l'application ne demande que le périmètre `drive.file` (accès uniquement aux fichiers qu'elle crée), aucune validation Google lourde n'est requise pour un usage courant.
+1. Ouvrez [script.google.com](https://script.google.com) → **Nouveau projet**.
+2. Supprimez le code par défaut et **collez tout le contenu de `Code.gs`**.
+3. Cliquez **Déployer → Nouveau déploiement**.
+4. Choisissez le type **Application Web** (icône engrenage → *Application Web*), avec :
+   - **Exécuter en tant que : Moi**
+   - **Qui a accès : Tout le monde**
+5. **Déployer**, puis autorisez l'accès à votre Drive quand Google le demande. (Comme c'est votre propre script, passez l'écran « Google n'a pas validé cette application » via **Paramètres avancés → Accéder au projet**.)
+6. Copiez l'**URL de l'application Web** (elle se termine par `/exec`).
 
 ---
 
-## 3. Créer une zone de dépôt
+## 2. Héberger l'interface sur GitHub Pages (gratuit)
 
-1. Dans `admin.html`, cliquez **+ Nouvelle zone**.
-2. Renseignez :
-   - **Nom** (ex. *Inscriptions 2026*)
-   - **Description** affichée au déposant
-   - **Dossier Drive** : ouvrez le dossier voulu dans Google Drive et copiez l'identifiant depuis l'URL :
-     `drive.google.com/drive/folders/`**`1AbCdEf...`** ← c'est cet identifiant qu'il faut coller.
-   - **Modèle de renommage** (voir ci-dessous)
-   - Les **informations demandées** au déposant (nom, email)
-3. **Enregistrez**, puis cliquez sur l'icône 🔗 pour obtenir le **lien de dépôt** à partager.
+1. Créez un dépôt public sur [github.com](https://github.com) (ex. `depot-documents`).
+2. Téléversez `index.html`, `admin.html`, `app.js`, `styles.css`, `README.md`, `Code.gs` et les logos `sup-photo.png` / `campus-11-arts.png`.
+3. **Settings → Pages → Source : Deploy from a branch → main → /(root) → Save**.
+4. Le site est en ligne à `https://VOTRE-COMPTE.github.io/depot-documents/` (tableau de bord : `.../admin.html`).
 
-> Le déposant doit avoir le **droit d'écriture** sur le dossier Drive. Le plus simple : partagez le dossier Drive en « **Tous les utilisateurs disposant du lien → Éditeur** », ou ajoutez nommément les personnes concernées.
+---
+
+## 3. Configurer le tableau de bord
+
+1. Ouvrez `admin.html`.
+2. Dans **Passerelle Google Drive**, collez l'URL de l'application Web (`/exec`) et **Enregistrez**. Le bouton **Tester la passerelle** confirme qu'elle répond.
+3. Créez une **zone** :
+   - **Dossier Drive racine** : ouvrez le dossier voulu dans votre Drive et copiez son identifiant depuis l'URL `drive.google.com/drive/folders/`**`IDENTIFIANT`**.
+   - **Organiser en Campus / Groupe / Étudiant** : définissez vos campus et, pour chacun, ses groupes (l'étudiant les choisira dans des menus).
+   - **Livrables attendus** (optionnel) : nom + deadline pour chacun.
+   - **Modèle de renommage** des fichiers.
+4. Cliquez sur 🔗 pour obtenir le **lien de dépôt** à partager.
+
+Les dossiers (campus, groupe, dossier au nom de l'étudiant) sont créés **automatiquement** dans votre Drive au premier dépôt.
 
 ---
 
 ## 4. Modèle de renommage
 
-Le nom final se compose en assemblant des variables entre accolades. Exemple :
+Assemblez des variables entre accolades, par ex. `{retard}{livrable}_{name}_{original}` :
 
-`{date}_{zone}_{name}_{original}` → `2026-07-28_Inscriptions-2026_Marie-Dupont_Mon-Dossier.pdf`
+| Variable | Résultat |
+|---|---|
+| `{date}` `{time}` `{datetime}` | date / heure du dépôt |
+| `{campus}` `{groupe}` | campus et groupe choisis |
+| `{name}` | nom de l'étudiant |
+| `{livrable}` | nom du livrable |
+| `{retard}` | `EN-RETARD_` si déposé après la deadline |
+| `{original}` `{ext}` `{counter}` `{rand}` | nom d'origine, extension, compteur, aléatoire |
 
-| Variable      | Résultat                          |
-|---------------|-----------------------------------|
-| `{date}`      | `2026-07-28`                      |
-| `{time}`      | `14-05-32`                        |
-| `{datetime}`  | `2026-07-28_14-05-32`             |
-| `{year}` `{month}` `{day}` | composants de date   |
-| `{zone}`      | nom de la zone                    |
-| `{name}`      | nom du déposant                   |
-| `{email}`     | email du déposant                 |
-| `{original}`  | nom d'origine du fichier          |
-| `{ext}`       | extension                         |
-| `{counter}`   | numéro séquentiel (`001`, `002`…) |
-| `{rand}`      | identifiant aléatoire court       |
-
-Les accents et caractères interdits sont automatiquement nettoyés, et l'extension d'origine est toujours conservée. Un aperçu en direct s'affiche pendant que vous éditez le modèle.
+Les accents et caractères interdits sont nettoyés ; l'extension d'origine est conservée.
 
 ---
 
-## 5. Sauvegarde de la configuration
+## Deadlines
 
-Les zones sont enregistrées **dans le navigateur** où vous utilisez `admin.html`. Pour les conserver ou les transférer sur un autre poste, utilisez les liens **Exporter / Importer** en bas du tableau de bord (fichier `depotdoc-config.json`).
+Chaque livrable peut avoir une date limite. Le dépôt **reste possible après la deadline**, mais le fichier est marqué **« en retard »** (badge à l'écran + préfixe `EN-RETARD_` dans le nom du fichier).
 
----
+## Notes
 
-## Sécurité & confidentialité
-
-- L'application ne stocke **aucune donnée sur un serveur** : le lien de dépôt contient la configuration de la zone, et l'envoi se fait de navigateur à Google Drive.
-- Le périmètre OAuth utilisé est `drive.file` : l'application ne voit **que les fichiers qu'elle dépose**, jamais le reste du Drive.
-- Le déposant s'authentifie avec **son propre compte Google**.
+- Taille max ~50 Mo par fichier (limite de la passerelle Apps Script).
+- Les configurations du tableau de bord sont stockées **dans votre navigateur** ; utilisez **Exporter / Importer** pour les sauvegarder ou changer de poste.
+- Sécurité : la passerelle n'écrit que dans les dossiers que vous configurez, avec vos droits ; elle ne lit rien d'autre.
 
 ## Dépannage
 
-- **« Connexion Google impossible »** : vérifiez que l'origine `https://VOTRE-COMPTE.github.io` est bien dans *Authorized JavaScript origins* (sans slash final), et que le Client ID est correct.
-- **« Erreur Drive 403/404 »** : le déposant n'a pas accès au dossier. Partagez le dossier Drive en écriture.
-- **Le lien affiche « invalide »** : régénérez-le depuis le tableau de bord (le format a pu changer).
+- **« Passerelle injoignable »** : revérifiez l'URL (`/exec`) et que le déploiement est en *Exécuter en tant que : Moi* / *Accès : Tout le monde*.
+- **Erreur au dépôt** : vérifiez que l'identifiant du dossier racine est correct et appartient au compte qui a déployé la passerelle.
+- **Après une modification du code** : les fichiers `app.js`/`styles.css` sont versionnés (`?v=`) pour éviter les problèmes de cache navigateur.

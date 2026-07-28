@@ -6,8 +6,7 @@
   <title>Depot de documents</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3">
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <div class="wrap wrap-narrow">
@@ -32,19 +31,17 @@
       </div>
 
       <div class="notice notice-warn hidden" id="configWarn">
-        L'envoi vers Drive n'est pas configure pour cette zone (identifiant client manquant).
+        L'envoi n'est pas configure pour cette zone (passerelle manquante). Contactez l'organisateur.
       </div>
 
       <div id="depositorFields"></div>
 
-      <!-- Mode livre : blocs par livrable -->
       <div id="deliverables" class="hidden"></div>
 
-      <!-- Mode libre : une seule zone -->
       <div class="dropzone" id="dropzone">
         <div class="dz-icon">&#128228;</div>
         <div class="dz-main">Glissez vos fichiers ici</div>
-        <div class="dz-sub">ou cliquez pour parcourir &middot; plusieurs fichiers possibles &middot; max <span id="maxLabel">50</span> Mo par fichier</div>
+        <div class="dz-sub">ou cliquez pour parcourir &middot; plusieurs fichiers possibles &middot; max <span id="maxLabel">40</span> Mo par fichier</div>
         <input type="file" id="fileInput" multiple class="hidden">
       </div>
       <div id="fileList"></div>
@@ -52,12 +49,11 @@
       <div class="notice notice-err hidden" id="errBox" style="margin-top:16px"></div>
 
       <button class="btn btn-primary btn-block btn-lg hidden" id="sendBtn" style="margin-top:18px">
-        <span id="sendLabel">Se connecter a Google et envoyer</span>
+        <span id="sendLabel">Envoyer</span>
       </button>
 
       <p class="footer-note">
         Vos fichiers sont ranges automatiquement dans le Drive de l'organisateur.
-        Vous vous connectez avec votre propre compte Google.
       </p>
     </div>
 
@@ -72,13 +68,12 @@
 
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=5"></script>
   <script>
   const $ = (id) => document.getElementById(id);
   let zone = null;
   let files = [];          // { file, delivIndex, newName, late, status, error, progress }
   let sending = false;
-  let studentFolderId = null;
 
   function parseHash() {
     const m = location.hash.match(/z=([^&]+)/);
@@ -107,16 +102,14 @@
     $('zoneName').textContent = zone.name;
     $('zoneDesc').textContent = zone.description || '';
     $('maxLabel').textContent = zone.maxMb;
-    if (!zone.clientId) $('configWarn').classList.remove('hidden');
+    if (!zone.gatewayUrl) $('configWarn').classList.remove('hidden');
 
-    // Champs deposant
     let html = '';
     const askName = zone.structured || zone.hasDeliverables || (zone.fields && zone.fields.name);
-    if (zone.structured && zone.tree) {
-      const campuses = Object.keys(zone.tree);
+    if (zone.structured && zone.campuses.length) {
       html += `<div class="select-field"><label for="depCampus">Campus</label>
         <select id="depCampus"><option value="">- Choisir -</option>` +
-        campuses.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('') +
+        zone.campuses.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('') +
         `</select></div>`;
       html += `<div class="select-field"><label for="depGroup">Groupe</label>
         <select id="depGroup"><option value="">- Choisir un campus d'abord -</option></select></div>`;
@@ -130,11 +123,10 @@
         <input type="email" id="depEmail" placeholder="prenom.nom@exemple.fr"></div>`;
     }
     $('depositorFields').innerHTML = html;
-    if (zone.structured && zone.tree) {
+    if (zone.structured && zone.campuses.length) {
       $('depCampus').addEventListener('change', () => { populateGroups(); renderFiles(); });
     }
 
-    // Mode livrables : construire les blocs, masquer la zone libre
     if (zone.hasDeliverables) {
       $('dropzone').classList.add('hidden');
       const box = $('deliverables');
@@ -167,12 +159,12 @@
   }
 
   function populateGroups() {
-    const campus = $('depCampus').value;
+    const campusName = $('depCampus').value;
     const sel = $('depGroup');
-    if (!campus || !zone.tree[campus]) { sel.innerHTML = '<option value="">- Choisir un campus d\'abord -</option>'; return; }
-    const groups = Object.keys(zone.tree[campus].g || {});
+    const campus = zone.campuses.find((c) => c.name === campusName);
+    if (!campus) { sel.innerHTML = '<option value="">- Choisir un campus d\'abord -</option>'; return; }
     sel.innerHTML = '<option value="">- Choisir -</option>' +
-      groups.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+      (campus.groups || []).map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
   }
 
   /* --------------------------- Contexte / noms -------------------------- */
@@ -191,8 +183,7 @@
     let livrable = '', late = false;
     if (item.delivIndex != null && zone.deliverables[item.delivIndex]) {
       const d = zone.deliverables[item.delivIndex];
-      livrable = d.name;
-      late = isLate(d.deadline);
+      livrable = d.name; late = isLate(d.deadline);
       let pre = '';
       if (!/\{livrable\}/.test(tpl)) pre = '{livrable}_' + pre;
       if (!/\{retard\}/.test(tpl)) pre = '{retard}' + pre;
@@ -205,21 +196,22 @@
   function addFiles(fileList, delivIndex) {
     Array.from(fileList).forEach((f) => {
       const tooBig = f.size > zone.maxMb * 1024 * 1024;
-      const item = {
+      files.push({
         file: f, delivIndex: (delivIndex != null ? delivIndex : null),
         newName: '', late: false, status: tooBig ? 'error' : 'ready',
         error: tooBig ? 'Fichier trop volumineux' : null, progress: 0
-      };
-      files.push(item);
+      });
     });
     renderFiles();
   }
 
   function renderFiles() {
     const icons = { ready: '&#128196;', uploading: '&#8987;', done: '&#9989;', error: '&#9888;&#65039;' };
-    const rowHtml = (item, i) => {
+    const makeRow = (item, i) => {
       const badge = item.late ? '<span class="badge-late">EN RETARD</span>' : '';
-      return `
+      const el = document.createElement('div');
+      el.className = 'file-row';
+      el.innerHTML = `
         <div class="fr-icon">${icons[item.status] || '&#128196;'}</div>
         <div class="fr-main">
           <div class="fr-new">${escapeHtml(item.newName)}${badge}</div>
@@ -227,27 +219,17 @@
           ${item.status === 'uploading' ? `<div class="progress"><span style="width:${Math.round(item.progress * 100)}%"></span></div>` : ''}
         </div>
         <div class="fr-status">${item.status === 'ready' && !sending ? '<button class="icon-btn" title="Retirer">&times;</button>' : ''}</div>`;
-    };
-    const makeRow = (item, i) => {
-      const el = document.createElement('div');
-      el.className = 'file-row';
-      el.innerHTML = rowHtml(item, i);
       const rm = el.querySelector('button');
       if (rm) rm.onclick = () => { files.splice(i, 1); renderFiles(); };
       return el;
     };
-
     if (zone.hasDeliverables) {
       zone.deliverables.forEach((d, di) => {
         const cont = document.querySelector('[data-files="' + di + '"]');
         if (!cont) return;
         cont.innerHTML = '';
         let n = 0;
-        files.forEach((item, i) => {
-          if (item.delivIndex !== di) return;
-          n++; computeName(item, n);
-          cont.appendChild(makeRow(item, i));
-        });
+        files.forEach((item, i) => { if (item.delivIndex !== di) return; n++; computeName(item, n); cont.appendChild(makeRow(item, i)); });
       });
     } else {
       const list = $('fileList');
@@ -263,49 +245,29 @@
     if (sending) return;
     $('errBox').classList.add('hidden');
     const c = ctx();
-    if (!zone.clientId) { showError('Cette zone n\'est pas configuree pour recevoir des fichiers. Contactez l\'organisateur.'); return; }
+
+    if (!zone.gatewayUrl) { showError('Cette zone n\'est pas configuree pour recevoir des fichiers. Contactez l\'organisateur.'); return; }
+    if (!zone.rootFolderId) { showError('Dossier de destination non configure. Contactez l\'organisateur.'); return; }
 
     const needStudentFolder = zone.structured || zone.hasDeliverables;
-    let baseParent = zone.rootFolderId;
-
-    if (zone.structured && zone.tree) {
+    const path = [];
+    if (zone.structured) {
       if (!c.campus) { showError('Merci de choisir votre campus.'); return; }
       if (!c.groupe) { showError('Merci de choisir votre groupe.'); return; }
-      const entry = zone.tree[c.campus];
-      if (!entry || !entry.g || !entry.g[c.groupe]) { showError('Configuration de groupe introuvable. Contactez l\'organisateur.'); return; }
-      baseParent = entry.g[c.groupe];
+      path.push(c.campus, c.groupe);
     }
-    if (needStudentFolder && !c.name.trim()) { showError('Merci d\'indiquer votre nom.'); return; }
-    else if (!needStudentFolder && zone.fields.name && !c.name.trim()) { showError('Merci d\'indiquer votre nom.'); return; }
+    if (needStudentFolder) {
+      if (!c.name.trim()) { showError('Merci d\'indiquer votre nom.'); return; }
+      path.push(c.name.trim());
+    } else if (zone.fields.name && $('depName') && !c.name.trim()) {
+      showError('Merci d\'indiquer votre nom.'); return;
+    }
     if (zone.fields.email && $('depEmail') && !$('depEmail').value.trim()) { showError('Merci d\'indiquer votre email.'); return; }
+
+    const cleanPath = path.map((n) => Util.folderName(n)).filter(Boolean);
 
     sending = true;
     $('sendBtn').disabled = true;
-    $('sendLabel').textContent = 'Connexion a Google...';
-    try {
-      await GDrive.init(zone.clientId);
-      await GDrive.requestToken();
-    } catch (e) {
-      sending = false; $('sendBtn').disabled = false;
-      $('sendLabel').textContent = 'Se connecter a Google et envoyer';
-      showError('Connexion Google impossible : ' + e.message); return;
-    }
-
-    let targetFolderId = zone.rootFolderId;
-    if (needStudentFolder) {
-      if (!studentFolderId) {
-        $('sendLabel').textContent = 'Preparation de votre dossier...';
-        try { studentFolderId = await GDrive.ensureFolder(c.name.trim(), baseParent); }
-        catch (e) {
-          sending = false; $('sendBtn').disabled = false;
-          $('sendLabel').textContent = 'Se connecter a Google et envoyer';
-          showError('Impossible de creer votre dossier : ' + e.message + '. Verifiez que le dossier a bien ete partage avec vous.');
-          return;
-        }
-      }
-      targetFolderId = studentFolderId;
-    }
-
     $('sendLabel').textContent = 'Envoi en cours...';
     renderFiles();
 
@@ -314,9 +276,17 @@
       if (item.status !== 'ready') continue;
       item.status = 'uploading'; item.progress = 0; renderFiles();
       try {
-        await GDrive.upload(item.file, item.newName, targetFolderId, (p) => { item.progress = p; renderFiles(); });
+        const content = await Gateway.fileToBase64(item.file);
+        item.progress = 0.15; renderFiles();
+        await Gateway.send(zone.gatewayUrl, {
+          root: zone.rootFolderId,
+          path: cleanPath,
+          filename: item.newName,
+          mimeType: item.file.type || 'application/octet-stream',
+          content
+        }, (p) => { item.progress = 0.15 + p * 0.85; renderFiles(); });
         item.status = 'done'; ok++;
-      } catch (e) { item.status = 'error'; item.error = 'Echec de l\'envoi'; console.error(e); }
+      } catch (e) { item.status = 'error'; item.error = 'Echec : ' + e.message; console.error(e); }
       renderFiles();
     }
 
@@ -329,7 +299,7 @@
     } else {
       $('sendBtn').disabled = false;
       $('sendLabel').textContent = 'Reessayer les fichiers en echec';
-      if (ok === 0) showError('Aucun fichier n\'a pu etre envoye. Verifiez votre acces au dossier Drive.');
+      if (ok === 0) showError('Aucun fichier n\'a pu etre envoye. Verifiez que la passerelle est bien deployee et le dossier racine valide.');
     }
   }
   function showError(msg) { $('errBox').textContent = msg; $('errBox').classList.remove('hidden'); }
@@ -344,9 +314,9 @@
 
   $('sendBtn').onclick = send;
   $('againBtn').onclick = () => {
-    files = []; sending = false; studentFolderId = null;
+    files = []; sending = false;
     $('sendBtn').disabled = false;
-    $('sendLabel').textContent = 'Se connecter a Google et envoyer';
+    $('sendLabel').textContent = 'Envoyer';
     renderFiles();
     $('screenDone').classList.add('hidden');
     $('screenMain').classList.remove('hidden');

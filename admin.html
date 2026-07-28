@@ -6,8 +6,7 @@
   <title>DepotDoc - Tableau de bord</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3">
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <div class="wrap">
@@ -31,16 +30,18 @@
       <span class="badge badge-brand" id="zoneCount">0 zone</span>
     </div>
 
-    <!-- Configuration Google -->
+    <!-- Passerelle -->
     <div class="card">
-      <div class="section-title">&#128273; Connexion Google Drive</div>
+      <div class="section-title">&#128225; Passerelle Google Drive</div>
       <div class="field">
-        <label for="clientId">Identifiant client OAuth (Client ID)</label>
-        <input type="text" id="clientId" placeholder="1234567890-abcdef.apps.googleusercontent.com">
-        <div class="sub">Cree une seule fois dans Google Cloud Console (voir le README). Necessaire pour envoyer les fichiers vers Drive.</div>
+        <label for="gwUrl">URL de la passerelle (Apps Script)</label>
+        <input type="text" id="gwUrl" placeholder="https://script.google.com/macros/s/.../exec">
+        <div class="sub">Deployez une fois le script <b>Code.gs</b> (voir le README) puis collez ici l'URL de l'application Web. C'est ce qui range les depots dans votre Drive.</div>
       </div>
-      <button class="btn btn-ghost" id="saveClient">Enregistrer l'identifiant</button>
-      <span id="clientSaved" class="badge badge-ok hidden" style="margin-left:10px">Enregistre &#10003;</span>
+      <button class="btn btn-ghost" id="saveGw">Enregistrer l'URL</button>
+      <button class="btn btn-ghost" id="testGw" style="margin-left:8px">Tester la passerelle</button>
+      <span id="gwSaved" class="badge badge-ok hidden" style="margin-left:10px">Enregistre &#10003;</span>
+      <span id="gwTest" class="badge hidden" style="margin-left:10px"></span>
     </div>
 
     <!-- Zones -->
@@ -53,9 +54,7 @@
     </div>
 
     <p class="footer-note">
-      Les configurations sont enregistrees dans ce navigateur. Utilisez le bouton
-      &laquo; Exporter &raquo; pour les sauvegarder ou les transferer sur un autre poste.
-      <br>
+      Les configurations sont enregistrees dans ce navigateur.
       <a href="#" id="exportBtn">Exporter</a> &middot;
       <a href="#" id="importBtn">Importer</a>
       <input type="file" id="importFile" accept="application/json" class="hidden">
@@ -80,18 +79,17 @@
       <div class="field">
         <label for="zFolder">Dossier Google Drive racine de la zone</label>
         <input type="text" id="zFolder" placeholder="ID du dossier Drive (voir README)">
-        <div class="sub">Copiez l'identifiant depuis l'URL du dossier : drive.google.com/drive/folders/<b>CET_IDENTIFIANT</b>. Partagez ce dossier en <b>Editeur</b> avec les deposants.</div>
+        <div class="sub">Copiez l'identifiant depuis l'URL du dossier : drive.google.com/drive/folders/<b>CET_IDENTIFIANT</b>. Ce doit etre un dossier de VOTRE Drive (celui ou tourne la passerelle).</div>
       </div>
 
       <div class="toggle-line">
         <label class="check"><input type="checkbox" id="zStructured"> Organiser en dossiers <b>Campus / Groupe / Etudiant</b></label>
       </div>
 
-      <!-- Section structuree -->
       <div id="structSection" class="hidden">
         <div class="field">
           <label>Campus et groupes</label>
-          <div class="sub" style="margin-bottom:8px">Pour chaque campus, indiquez ses groupes (un par ligne). Ces dossiers seront crees automatiquement dans le Drive.</div>
+          <div class="sub" style="margin-bottom:8px">Pour chaque campus, indiquez ses groupes (un par ligne). L'etudiant les choisira dans des menus, et les dossiers se creent automatiquement au premier depot.</div>
           <div id="campusEditor"></div>
           <button class="btn btn-ghost" id="addCampus" style="margin-top:4px">+ Ajouter un campus</button>
         </div>
@@ -120,7 +118,6 @@
         <div class="preview-box" id="preview"></div>
       </div>
 
-      <!-- Champs deposant -->
       <div class="field" id="fieldsFlat">
         <label>Informations demandees au deposant</label>
         <div class="row" style="margin-top:6px">
@@ -136,7 +133,8 @@
 
       <div class="field">
         <label for="zMax">Taille maximale par fichier (Mo)</label>
-        <input type="number" id="zMax" value="50" min="1" max="500" style="max-width:140px">
+        <input type="number" id="zMax" value="40" min="1" max="50" style="max-width:140px">
+        <div class="sub">La passerelle accepte jusqu'a ~50 Mo par fichier.</div>
       </div>
 
       <div class="modal-foot">
@@ -146,25 +144,11 @@
     </div>
   </div>
 
-  <!-- Modale generation des dossiers -->
-  <div class="modal-bg" id="buildModal">
-    <div class="modal">
-      <h3>Creer les dossiers dans Drive</h3>
-      <p class="hint">Connexion a votre Google Drive pour creer l'arborescence des campus et groupes sous le dossier racine de la zone. A relancer si vous ajoutez des campus ou groupes.</p>
-      <div id="treePreview" class="tree-preview"></div>
-      <div id="buildStatus" class="build-status"></div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" id="buildClose">Fermer</button>
-        <button class="btn btn-primary" id="buildRun">Se connecter et creer les dossiers</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Modale du lien genere -->
   <div class="modal-bg" id="linkModal">
     <div class="modal">
       <h3>Lien de depot &#128279;</h3>
-      <p class="hint">Partagez ce lien avec les personnes qui doivent deposer des fichiers dans cette zone. Aucune configuration de leur cote.</p>
+      <p class="hint">Partagez ce lien avec les personnes qui doivent deposer des fichiers. Aucune configuration ni compte Google de leur cote.</p>
       <div class="link-out">
         <input type="text" id="linkField" readonly>
         <button class="btn btn-primary" id="copyLink">Copier</button>
@@ -176,14 +160,13 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=5"></script>
   <script>
   const $ = (id) => document.getElementById(id);
   let zones = Store.getZones();
   let editingId = null;
-  let mCampuses = [];      // [{ name, groupsText }] edition en cours
-  let mDeliverables = [];  // [{ name, deadline }] edition en cours
-  let buildingZoneId = null;
+  let mCampuses = [];
+  let mDeliverables = [];
 
   function saveAll() { Store.saveZones(zones); }
   function escapeHtml(s) {
@@ -202,14 +185,11 @@
     }
     list.innerHTML = '';
     zones.forEach((z) => {
-      const structured = !!z.structured;
-      const built = structured && z.tree && Object.keys(z.tree).length;
       let meta;
-      if (structured) {
+      if (z.structured) {
         const nbC = (z.campuses || []).length;
         const nbG = (z.campuses || []).reduce((s, c) => s + (c.groups ? c.groups.length : 0), 0);
-        meta = 'Campus/Groupe/Etudiant &middot; ' + nbC + ' campus, ' + nbG + ' groupes &middot; '
-          + (built ? 'dossiers crees &#10003;' : 'dossiers a creer');
+        meta = 'Campus/Groupe/Etudiant &middot; ' + nbC + ' campus, ' + nbG + ' groupes';
       } else {
         meta = z.template + ' &middot; dossier ' + (z.rootFolderId ? escapeHtml(z.rootFolderId.slice(0, 10)) + '...' : 'non defini');
       }
@@ -222,13 +202,10 @@
           <div class="zi-meta">${meta}</div>
         </div>
         <div class="zi-actions">
-          ${structured ? '<button class="icon-btn" title="Creer les dossiers dans Drive" data-act="build">&#128193;</button>' : ''}
           <button class="icon-btn" title="Lien de depot" data-act="link">&#128279;</button>
           <button class="icon-btn" title="Modifier" data-act="edit">&#9998;</button>
           <button class="icon-btn" title="Supprimer" data-act="del">&#128465;</button>
         </div>`;
-      const b = el.querySelector('[data-act=build]');
-      if (b) b.onclick = () => openBuild(z);
       el.querySelector('[data-act=link]').onclick = () => showLink(z);
       el.querySelector('[data-act=edit]').onclick = () => openModal(z);
       el.querySelector('[data-act=del]').onclick = () => {
@@ -260,6 +237,12 @@
       box.appendChild(row);
     });
   }
+  function collectCampuses() {
+    return mCampuses.map((c) => ({
+      name: (c.name || '').trim(),
+      groups: (c.groupsText || '').split('\n').map((g) => g.trim()).filter(Boolean)
+    })).filter((c) => c.name);
+  }
 
   /* --------------------------- Editeur livrables ------------------------ */
   function renderDelivEditor() {
@@ -279,9 +262,7 @@
     });
   }
   function collectDeliverables() {
-    return mDeliverables
-      .map((d) => ({ name: (d.name || '').trim(), deadline: d.deadline || '' }))
-      .filter((d) => d.name);
+    return mDeliverables.map((d) => ({ name: (d.name || '').trim(), deadline: d.deadline || '' })).filter((d) => d.name);
   }
 
   /* --------------------------- Modale de zone --------------------------- */
@@ -290,9 +271,7 @@
     $('fieldsFlat').classList.toggle('hidden', on);
     $('fieldsStruct').classList.toggle('hidden', !on);
   }
-  function toggleDeliv(on) {
-    $('delivSection').classList.toggle('hidden', !on);
-  }
+  function toggleDeliv(on) { $('delivSection').classList.toggle('hidden', !on); }
 
   function openModal(zone) {
     editingId = zone ? zone.id : null;
@@ -306,7 +285,7 @@
     $('zFieldName').checked = zone ? !!(zone.fields && zone.fields.name) : true;
     $('zFieldEmail').checked = zone ? !!(zone.fields && zone.fields.email) : false;
     $('zFieldEmail2').checked = zone ? !!(zone.fields && zone.fields.email) : false;
-    $('zMax').value = zone ? (zone.maxMb || 50) : 50;
+    $('zMax').value = zone ? (zone.maxMb || 40) : 40;
 
     mCampuses = (zone && zone.campuses && zone.campuses.length)
       ? zone.campuses.map((c) => ({ name: c.name, groupsText: (c.groups || []).join('\n') }))
@@ -337,26 +316,16 @@
       box.appendChild(c);
     });
   }
-
   function updatePreview() {
     const tpl = $('zTemplate').value || '{name}_{original}';
     const name = Renamer.apply(tpl, {
-      zone: $('zName').value || 'Zone',
-      campus: 'Nice', groupe: 'Groupe 3',
+      zone: $('zName').value || 'Zone', campus: 'Nice', groupe: 'Groupe 3',
       name: 'Marie Dupont', email: 'marie.dupont@exemple.fr',
+      livrable: "Note d'intention",
       original: 'Book portfolio.pdf', counter: 1, date: new Date()
     });
     $('preview').innerHTML =
       '<span class="old">Book portfolio.pdf</span><span class="arrow">&rarr;</span>' + escapeHtml(name);
-  }
-
-  function collectCampuses() {
-    return mCampuses
-      .map((c) => ({
-        name: (c.name || '').trim(),
-        groups: (c.groupsText || '').split('\n').map((g) => g.trim()).filter(Boolean)
-      }))
-      .filter((c) => c.name);
   }
 
   function saveZone() {
@@ -372,106 +341,30 @@
       if (!campuses.length) { alert('Ajoutez au moins un campus.'); return; }
       if (!campuses.some((c) => c.groups.length)) { alert('Ajoutez au moins un groupe.'); return; }
     }
-
     const deliverables = $('zHasDeliv').checked ? collectDeliverables() : [];
     if ($('zHasDeliv').checked && !deliverables.length) { alert('Ajoutez au moins un livrable, ou decochez l\'option.'); return; }
 
     const emailWanted = structured ? $('zFieldEmail2').checked : $('zFieldEmail').checked;
-    const prev = zones.find((z) => z.id === editingId);
     const data = {
       id: editingId || Util.uid(),
-      name,
-      description: $('zDesc').value.trim(),
+      name, description: $('zDesc').value.trim(),
       rootFolderId: folder,
-      structured,
-      campuses,
-      deliverables,
-      // conserve l'arborescence deja creee si le dossier racine n'a pas change
-      tree: (prev && prev.rootFolderId === folder) ? (prev.tree || null) : null,
+      structured, campuses, deliverables,
       template: $('zTemplate').value.trim() || '{name}_{original}',
       fields: { name: structured ? true : $('zFieldName').checked, email: emailWanted },
-      maxMb: parseInt($('zMax').value, 10) || 50
+      maxMb: parseInt($('zMax').value, 10) || 40
     };
     if (editingId) zones = zones.map((z) => (z.id === editingId ? data : z));
     else zones.push(data);
-    saveAll();
-    closeModal();
-    refresh();
-    if (structured && !data.tree) {
-      setTimeout(() => {
-        if (confirm('Zone enregistree. Voulez-vous creer maintenant les dossiers campus/groupes dans le Drive ?')) openBuild(data);
-      }, 150);
-    }
-  }
-
-  /* --------------------- Generation de l'arborescence ------------------- */
-  function treeText(zone) {
-    let out = 'Dossier racine\n';
-    (zone.campuses || []).forEach((c) => {
-      out += '  |- ' + c.name + '\n';
-      (c.groups || []).forEach((g) => { out += '  |    |- ' + g + '\n'; });
-    });
-    out += '       |- (dossier au nom de chaque etudiant)';
-    return out;
-  }
-  function openBuild(zone) {
-    buildingZoneId = zone.id;
-    $('treePreview').textContent = treeText(zone);
-    const st = $('buildStatus'); st.className = 'build-status'; st.textContent = '';
-    $('buildRun').disabled = false;
-    $('buildModal').classList.add('open');
-  }
-  function setBuildStatus(kind, msg) {
-    const st = $('buildStatus');
-    st.className = 'build-status show ' + kind;
-    st.innerHTML = msg;
-  }
-  async function runBuild() {
-    const zone = zones.find((z) => z.id === buildingZoneId);
-    if (!zone) return;
-    if (!Store.getClientId()) { setBuildStatus('err', 'Renseignez d\'abord l\'identifiant client OAuth en haut de la page.'); return; }
-    $('buildRun').disabled = true;
-    setBuildStatus('info', 'Connexion a Google Drive...');
-    try {
-      await GDrive.init(Store.getClientId());
-      await GDrive.requestToken();
-    } catch (e) { setBuildStatus('err', 'Connexion impossible : ' + e.message); $('buildRun').disabled = false; return; }
-
-    const tree = zone.tree || {};
-    try {
-      for (const campus of zone.campuses) {
-        setBuildStatus('info', 'Creation du campus &laquo; ' + escapeHtml(campus.name) + ' &raquo;...');
-        let entry = tree[campus.name] || { i: null, g: {} };
-        if (!entry.i) entry.i = await GDrive.ensureFolder(campus.name, zone.rootFolderId);
-        for (const g of campus.groups) {
-          if (!entry.g[g]) {
-            setBuildStatus('info', 'Groupe &laquo; ' + escapeHtml(g) + ' &raquo; dans ' + escapeHtml(campus.name) + '...');
-            entry.g[g] = await GDrive.ensureFolder(g, entry.i);
-          }
-        }
-        tree[campus.name] = entry;
-      }
-      zone.tree = tree;
-      zones = zones.map((z) => (z.id === zone.id ? zone : z));
-      saveAll(); refresh();
-      setBuildStatus('ok', 'Arborescence creee dans votre Drive. Vous pouvez maintenant generer le lien de depot.');
-    } catch (e) {
-      setBuildStatus('err', 'Erreur pendant la creation : ' + escapeHtml(e.message) + '. Verifiez que le dossier racine existe et que vous y avez acces.');
-      $('buildRun').disabled = false;
-    }
+    saveAll(); closeModal(); refresh();
   }
 
   /* --------------------------- Lien de depot ---------------------------- */
   function showLink(zone) {
-    if (!Store.getClientId()) {
-      if (!confirm('Aucun identifiant client OAuth n\'est enregistre. Le lien fonctionnera mais l\'envoi vers Drive echouera tant que vous ne l\'aurez pas renseigne. Continuer ?')) return;
+    if (!Store.getGatewayUrl()) {
+      if (!confirm('Aucune URL de passerelle n\'est enregistree. Le lien fonctionnera mais l\'envoi echouera tant que vous ne l\'aurez pas renseignee. Continuer ?')) return;
     }
-    if (zone.structured && (!zone.tree || !Object.keys(zone.tree).length)) {
-      if (!confirm('Les dossiers campus/groupes ne sont pas encore crees dans le Drive. Le depot ne fonctionnera pas correctement. Voulez-vous les creer d\'abord ?')) {
-        // l'utilisateur choisit de continuer quand meme
-      } else { openBuild(zone); return; }
-    }
-    const link = ZoneConfig.depositLink(zone, Store.getClientId());
+    const link = ZoneConfig.depositLink(zone, Store.getGatewayUrl());
     $('linkField').value = link;
     $('openLink').href = link;
     $('linkModal').classList.add('open');
@@ -479,7 +372,7 @@
 
   /* ---------------------------- Import/export --------------------------- */
   function exportConfig() {
-    const blob = new Blob([JSON.stringify({ clientId: Store.getClientId(), zones }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ gateway: Store.getGatewayUrl(), zones }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'depotdoc-config.json'; a.click();
   }
@@ -488,9 +381,9 @@
     r.onload = () => {
       try {
         const data = JSON.parse(r.result);
-        if (data.clientId) Store.setClientId(data.clientId);
+        if (data.gateway) Store.setGatewayUrl(data.gateway);
         if (Array.isArray(data.zones)) { zones = data.zones; saveAll(); }
-        $('clientId').value = Store.getClientId(); refresh();
+        $('gwUrl').value = Store.getGatewayUrl(); refresh();
         alert('Configuration importee.');
       } catch (e) { alert('Fichier invalide.'); }
     };
@@ -498,11 +391,26 @@
   }
 
   /* ------------------------------ Liaisons ------------------------------ */
-  $('clientId').value = Store.getClientId();
-  $('saveClient').onclick = () => {
-    Store.setClientId($('clientId').value);
-    $('clientSaved').classList.remove('hidden');
-    setTimeout(() => $('clientSaved').classList.add('hidden'), 2000);
+  $('gwUrl').value = Store.getGatewayUrl();
+  $('saveGw').onclick = () => {
+    Store.setGatewayUrl($('gwUrl').value);
+    $('gwSaved').classList.remove('hidden');
+    setTimeout(() => $('gwSaved').classList.add('hidden'), 2000);
+  };
+  $('testGw').onclick = async () => {
+    const badge = $('gwTest');
+    const url = $('gwUrl').value.trim();
+    if (!url) { alert('Renseignez d\'abord l\'URL.'); return; }
+    badge.className = 'badge badge-brand'; badge.textContent = 'Test en cours...'; badge.classList.remove('hidden');
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      const data = await res.json();
+      if (data && data.ok) { badge.className = 'badge badge-ok'; badge.textContent = 'Passerelle active ✓'; }
+      else throw new Error('reponse inattendue');
+    } catch (e) {
+      badge.className = 'badge'; badge.style.background = 'var(--danger-soft)'; badge.style.color = '#b42318';
+      badge.textContent = 'Injoignable';
+    }
   };
   $('addZone').onclick = () => openModal(null);
   $('cancelZone').onclick = closeModal;
@@ -513,8 +421,6 @@
   $('addDeliv').onclick = () => { mDeliverables.push({ name: '', deadline: '' }); renderDelivEditor(); };
   $('zTemplate').addEventListener('input', updatePreview);
   $('zName').addEventListener('input', updatePreview);
-  $('buildClose').onclick = () => $('buildModal').classList.remove('open');
-  $('buildRun').onclick = runBuild;
   $('copyLink').onclick = () => {
     $('linkField').select();
     navigator.clipboard.writeText($('linkField').value);
@@ -525,7 +431,7 @@
   $('exportBtn').onclick = (e) => { e.preventDefault(); exportConfig(); };
   $('importBtn').onclick = (e) => { e.preventDefault(); $('importFile').click(); };
   $('importFile').onchange = (e) => { if (e.target.files[0]) importConfig(e.target.files[0]); };
-  ['modal', 'buildModal', 'linkModal'].forEach((id) => {
+  ['modal', 'linkModal'].forEach((id) => {
     $(id).addEventListener('click', (e) => { if (e.target === $(id)) $(id).classList.remove('open'); });
   });
 
