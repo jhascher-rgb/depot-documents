@@ -7,8 +7,47 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=6">
+  <style>
+    body.locked { overflow: hidden; }
+    body.locked .wrap { display: none; }
+    body:not(.locked) .auth-gate { display: none; }
+    .auth-gate {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #fde3ec 0%, transparent 55%),
+        radial-gradient(1000px 500px at 100% 0%, #f4f6fb 0%, transparent 50%),
+        #f4f6fb;
+    }
+    .auth-card {
+      background: #fff; border: 1px solid #e4e8f0; border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(24,33,66,.12); padding: 30px 28px; width: 100%; max-width: 360px; text-align: center;
+    }
+    .auth-card img { height: 46px; width: auto; margin-bottom: 16px; }
+    .auth-card h2 { font-size: 18px; margin: 0 0 6px; }
+    .auth-hint { color: #6b7488; font-size: 13.5px; margin: 0 0 18px; }
+    .auth-card input { width: 100%; padding: 12px 13px; font-size: 14px; margin-bottom: 10px;
+      border: 1px solid #e4e8f0; border-radius: 10px; box-sizing: border-box; }
+    .auth-card input:focus { outline: none; border-color: #e4013b; box-shadow: 0 0 0 3px rgba(228,1,59,.15); }
+    .auth-err { color: #b42318; background: #fdecec; border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-bottom: 10px; }
+    .auth-forgot { display: inline-block; margin-top: 14px; font-size: 12.5px; color: #6b7488; text-decoration: none; }
+    .auth-forgot:hover { text-decoration: underline; }
+  </style>
 </head>
-<body>
+<body class="locked">
+
+  <div class="auth-gate" id="authGate">
+    <div class="auth-card">
+      <img src="sup-photo.png" alt="Sup Photo">
+      <h2 id="authTitle">Tableau de bord protege</h2>
+      <p class="auth-hint" id="authHint">Entrez le mot de passe pour acceder.</p>
+      <input type="password" id="authPw" placeholder="Mot de passe" autocomplete="off">
+      <input type="password" id="authPw2" placeholder="Confirmez le mot de passe" autocomplete="off" class="hidden">
+      <div class="auth-err hidden" id="authErr"></div>
+      <button class="btn btn-primary btn-block" id="authBtn">Se connecter</button>
+      <a href="#" class="auth-forgot" id="authForgot">Mot de passe oublie ?</a>
+    </div>
+  </div>
   <div class="wrap">
 
     <div class="brandbar">
@@ -159,6 +198,63 @@
       </div>
     </div>
   </div>
+
+  <script>
+  /* -------------------- Protection par mot de passe --------------------- */
+  (function () {
+    const KEY = 'depotdoc.pwhash';
+    const SESSION = 'depotdoc.authed';
+    const g = (id) => document.getElementById(id);
+
+    async function sha256(str) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+      return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    function unlock() {
+      try { sessionStorage.setItem(SESSION, '1'); } catch (e) {}
+      document.body.classList.remove('locked');
+    }
+    function showErr(msg) { const e = g('authErr'); e.textContent = msg; e.classList.remove('hidden'); }
+
+    // Deja authentifie pour cette session ?
+    try { if (sessionStorage.getItem(SESSION) === '1') { unlock(); return; } } catch (e) {}
+
+    const hasPw = !!localStorage.getItem(KEY);
+    let createMode = !hasPw;
+
+    if (createMode) {
+      g('authTitle').textContent = 'Creez un mot de passe';
+      g('authHint').textContent = 'Premiere utilisation : definissez un mot de passe pour proteger ce tableau de bord.';
+      g('authPw2').classList.remove('hidden');
+      g('authBtn').textContent = 'Creer le mot de passe';
+    }
+
+    async function submit() {
+      g('authErr').classList.add('hidden');
+      const pw = g('authPw').value;
+      if (createMode) {
+        const pw2 = g('authPw2').value;
+        if (pw.length < 4) return showErr('Choisissez au moins 4 caracteres.');
+        if (pw !== pw2) return showErr('Les deux mots de passe ne correspondent pas.');
+        localStorage.setItem(KEY, await sha256(pw));
+        unlock();
+      } else {
+        const h = await sha256(pw);
+        if (h === localStorage.getItem(KEY)) unlock();
+        else showErr('Mot de passe incorrect.');
+      }
+    }
+
+    g('authBtn').onclick = submit;
+    g('authPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    g('authPw2').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    g('authForgot').onclick = (e) => {
+      e.preventDefault();
+      alert('Le mot de passe est stocke uniquement dans ce navigateur (de facon chiffree).\n\nSi vous l\'avez oublie : ouvrez les parametres du navigateur et effacez les donnees du site pour ce domaine, puis rechargez la page pour en definir un nouveau.\n\nAstuce : gardez une sauvegarde de vos zones via le bouton Exporter.');
+    };
+    g('authPw').focus();
+  })();
+  </script>
 
   <script src="app.js?v=6"></script>
   <script>
