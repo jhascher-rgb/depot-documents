@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DepotDoc - Tableau de bord</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="brandbar">
+      <div class="brand-left">
+        <img class="logo-sup" src="sup-photo.png" alt="Sup Photo - image & strategie">
+        <div class="brand-text">
+          <span class="kicker">Depot de documents</span>
+          <span class="title">Tableau de bord</span>
+        </div>
+      </div>
+      <img class="logo-campus" src="campus-11-arts.png" alt="Campus des 11 Arts">
+    </div>
+
+    <div class="topbar">
+      <div>
+        <h1 style="font-size:18px;margin:0">Bienvenue</h1>
+        <p style="margin:2px 0 0;font-size:13px;color:var(--muted)">Configurez vos zones de depot et generez les liens a partager.</p>
+      </div>
+      <span class="badge badge-brand" id="zoneCount">0 zone</span>
+    </div>
+
+    <!-- Configuration Google -->
+    <div class="card">
+      <div class="section-title">&#128273; Connexion Google Drive</div>
+      <div class="field">
+        <label for="clientId">Identifiant client OAuth (Client ID)</label>
+        <input type="text" id="clientId" placeholder="1234567890-abcdef.apps.googleusercontent.com">
+        <div class="sub">Cree une seule fois dans Google Cloud Console (voir le README). Necessaire pour envoyer les fichiers vers Drive.</div>
+      </div>
+      <button class="btn btn-ghost" id="saveClient">Enregistrer l'identifiant</button>
+      <span id="clientSaved" class="badge badge-ok hidden" style="margin-left:10px">Enregistre &#10003;</span>
+    </div>
+
+    <!-- Zones -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="section-title" style="margin:0">&#128194; Zones de depot</div>
+        <button class="btn btn-primary" id="addZone">+ Nouvelle zone</button>
+      </div>
+      <div id="zoneList" class="zone-list"></div>
+    </div>
+
+    <p class="footer-note">
+      Les configurations sont enregistrees dans ce navigateur. Utilisez le bouton
+      &laquo; Exporter &raquo; pour les sauvegarder ou les transferer sur un autre poste.
+      <br>
+      <a href="#" id="exportBtn">Exporter</a> &middot;
+      <a href="#" id="importBtn">Importer</a>
+      <input type="file" id="importFile" accept="application/json" class="hidden">
+    </p>
+  </div>
+
+  <!-- Modale d'edition de zone -->
+  <div class="modal-bg" id="modal">
+    <div class="modal">
+      <h3 id="modalTitle">Nouvelle zone de depot</h3>
+
+      <div class="field">
+        <label for="zName">Nom de la zone</label>
+        <input type="text" id="zName" placeholder="Ex : Inscriptions 2026">
+      </div>
+
+      <div class="field">
+        <label for="zDesc">Description (visible par le deposant)</label>
+        <textarea id="zDesc" placeholder="Ex : Deposez ici votre dossier d'inscription complet au format PDF."></textarea>
+      </div>
+
+      <div class="field">
+        <label for="zFolder">Dossier Google Drive de destination</label>
+        <input type="text" id="zFolder" placeholder="ID du dossier Drive (voir README)">
+        <div class="sub">Copiez l'identifiant depuis l'URL du dossier Drive : drive.google.com/drive/folders/<b>CET_IDENTIFIANT</b></div>
+      </div>
+
+      <div class="field">
+        <label for="zTemplate">Modele de renommage</label>
+        <input type="text" id="zTemplate" placeholder="{date}_{zone}_{name}_{original}">
+        <div class="chips" id="varChips"></div>
+        <div class="preview-box" id="preview"></div>
+      </div>
+
+      <div class="field">
+        <label>Informations demandees au deposant</label>
+        <div class="row" style="margin-top:6px">
+          <label class="check"><input type="checkbox" id="zFieldName"> Nom / prenom</label>
+          <label class="check"><input type="checkbox" id="zFieldEmail"> Adresse email</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="zMax">Taille maximale par fichier (Mo)</label>
+        <input type="number" id="zMax" value="25" min="1" max="500" style="max-width:140px">
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="cancelZone">Annuler</button>
+        <button class="btn btn-primary" id="saveZone">Enregistrer la zone</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modale du lien genere -->
+  <div class="modal-bg" id="linkModal">
+    <div class="modal">
+      <h3>Lien de depot &#128279;</h3>
+      <p class="hint">Partagez ce lien avec les personnes qui doivent deposer des fichiers dans cette zone. Aucune configuration de leur cote.</p>
+      <div class="link-out">
+        <input type="text" id="linkField" readonly>
+        <button class="btn btn-primary" id="copyLink">Copier</button>
+      </div>
+      <div class="modal-foot">
+        <a class="btn btn-ghost" id="openLink" target="_blank">Ouvrir la page</a>
+        <button class="btn btn-primary" id="closeLink">Termine</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+  /* --------------------------- Etat & rendu ----------------------------- */
+  let zones = Store.getZones();
+  let editingId = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  function refresh() {
+    const list = $('zoneList');
+    $('zoneCount').textContent = zones.length + (zones.length > 1 ? ' zones' : ' zone');
+    if (!zones.length) {
+      list.innerHTML = '<div class="empty">Aucune zone pour l\'instant. Cliquez sur &laquo; Nouvelle zone &raquo; pour commencer.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    zones.forEach((z) => {
+      const el = document.createElement('div');
+      el.className = 'zone-item';
+      el.innerHTML = `
+        <div class="zi-main">
+          <div class="zi-name">${escapeHtml(z.name)}</div>
+          <div class="zi-meta">${escapeHtml(z.template)} &middot; dossier ${z.folderId ? escapeHtml(z.folderId.slice(0,10))+'...' : 'non defini'}</div>
+        </div>
+        <div class="zi-actions">
+          <button class="icon-btn" title="Lien de depot" data-act="link">&#128279;</button>
+          <button class="icon-btn" title="Modifier" data-act="edit">&#9998;</button>
+          <button class="icon-btn" title="Supprimer" data-act="del">&#128465;</button>
+        </div>`;
+      el.querySelector('[data-act=link]').onclick = () => showLink(z);
+      el.querySelector('[data-act=edit]').onclick = () => openModal(z);
+      el.querySelector('[data-act=del]').onclick = () => {
+        if (confirm('Supprimer la zone "' + z.name + '" ?')) {
+          zones = zones.filter((x) => x.id !== z.id);
+          Store.saveZones(zones); refresh();
+        }
+      };
+      list.appendChild(el);
+    });
+  }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  /* --------------------------- Modale de zone --------------------------- */
+  function openModal(zone) {
+    editingId = zone ? zone.id : null;
+    $('modalTitle').textContent = zone ? 'Modifier la zone' : 'Nouvelle zone de depot';
+    $('zName').value = zone ? zone.name : '';
+    $('zDesc').value = zone ? zone.description : '';
+    $('zFolder').value = zone ? zone.folderId : '';
+    $('zTemplate').value = zone ? zone.template : '{date}_{zone}_{name}_{original}';
+    $('zFieldName').checked = zone ? !!(zone.fields && zone.fields.name) : true;
+    $('zFieldEmail').checked = zone ? !!(zone.fields && zone.fields.email) : false;
+    $('zMax').value = zone ? (zone.maxMb || 25) : 25;
+    updatePreview();
+    $('modal').classList.add('open');
+  }
+  function closeModal() { $('modal').classList.remove('open'); }
+
+  function buildChips() {
+    const box = $('varChips');
+    box.innerHTML = '';
+    Renamer.variables.forEach(([v, desc]) => {
+      const c = document.createElement('span');
+      c.className = 'chip'; c.textContent = v; c.title = desc;
+      c.onclick = () => {
+        const inp = $('zTemplate');
+        inp.value += v; inp.focus(); updatePreview();
+      };
+      box.appendChild(c);
+    });
+  }
+
+  function updatePreview() {
+    const tpl = $('zTemplate').value || '{datetime}_{original}';
+    const name = Renamer.apply(tpl, {
+      zone: $('zName').value || 'Zone',
+      name: 'Marie Dupont',
+      email: 'marie.dupont@exemple.fr',
+      original: 'Mon Dossier.pdf',
+      counter: 1,
+      date: new Date()
+    });
+    $('preview').innerHTML =
+      '<span class="old">Mon Dossier.pdf</span><span class="arrow">&rarr;</span>' + escapeHtml(name);
+  }
+
+  function saveZone() {
+    const name = $('zName').value.trim();
+    const folder = $('zFolder').value.trim();
+    if (!name) { alert('Donnez un nom a la zone.'); return; }
+    if (!folder) { alert('Indiquez l\'identifiant du dossier Google Drive de destination.'); return; }
+    const data = {
+      id: editingId || Util.uid(),
+      name,
+      description: $('zDesc').value.trim(),
+      folderId: folder,
+      template: $('zTemplate').value.trim() || '{datetime}_{original}',
+      fields: { name: $('zFieldName').checked, email: $('zFieldEmail').checked },
+      maxMb: parseInt($('zMax').value, 10) || 25
+    };
+    if (editingId) {
+      zones = zones.map((z) => (z.id === editingId ? data : z));
+    } else {
+      zones.push(data);
+    }
+    Store.saveZones(zones);
+    closeModal();
+    refresh();
+  }
+
+  /* --------------------------- Lien de depot ---------------------------- */
+  function showLink(zone) {
+    if (!Store.getClientId()) {
+      if (!confirm('Aucun identifiant client OAuth n\'est enregistre. Le lien fonctionnera mais l\'envoi vers Drive echouera tant que vous ne l\'aurez pas renseigne. Continuer ?')) return;
+    }
+    const link = ZoneConfig.depositLink(zone, Store.getClientId());
+    $('linkField').value = link;
+    $('openLink').href = link;
+    $('linkModal').classList.add('open');
+  }
+
+  /* ---------------------------- Import/export --------------------------- */
+  function exportConfig() {
+    const blob = new Blob([JSON.stringify({
+      clientId: Store.getClientId(), zones
+    }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'depotdoc-config.json';
+    a.click();
+  }
+  function importConfig(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const data = JSON.parse(r.result);
+        if (data.clientId) Store.setClientId(data.clientId);
+        if (Array.isArray(data.zones)) { zones = data.zones; Store.saveZones(zones); }
+        $('clientId').value = Store.getClientId();
+        refresh();
+        alert('Configuration importee.');
+      } catch (e) { alert('Fichier invalide.'); }
+    };
+    r.readAsText(file);
+  }
+
+  /* ------------------------------ Liaisons ------------------------------ */
+  $('clientId').value = Store.getClientId();
+  $('saveClient').onclick = () => {
+    Store.setClientId($('clientId').value);
+    $('clientSaved').classList.remove('hidden');
+    setTimeout(() => $('clientSaved').classList.add('hidden'), 2000);
+  };
+  $('addZone').onclick = () => openModal(null);
+  $('cancelZone').onclick = closeModal;
+  $('saveZone').onclick = saveZone;
+  $('zTemplate').addEventListener('input', updatePreview);
+  $('zName').addEventListener('input', updatePreview);
+  $('copyLink').onclick = () => {
+    $('linkField').select();
+    navigator.clipboard.writeText($('linkField').value);
+    $('copyLink').textContent = 'Copie !';
+    setTimeout(() => ($('copyLink').textContent = 'Copier'), 1500);
+  };
+  $('closeLink').onclick = () => $('linkModal').classList.remove('open');
+  $('exportBtn').onclick = (e) => { e.preventDefault(); exportConfig(); };
+  $('importBtn').onclick = (e) => { e.preventDefault(); $('importFile').click(); };
+  $('importFile').onchange = (e) => { if (e.target.files[0]) importConfig(e.target.files[0]); };
+  [$('modal'), $('linkModal')].forEach((m) => {
+    m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('open'); });
+  });
+
+  buildChips();
+  refresh();
+  </script>
+</body>
+</html>

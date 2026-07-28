@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Depot de documents</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <div class="wrap wrap-narrow">
+
+    <div class="brand-center">
+      <img class="logo-sup" src="sup-photo.png" alt="Sup Photo - image & strategie">
+      <span class="divider"></span>
+      <img class="logo-campus" src="campus-11-arts.png" alt="Campus des 11 Arts">
+    </div>
+
+    <!-- Ecran : lien invalide -->
+    <div class="card hidden" id="screenInvalid">
+      <div class="notice notice-err">
+        Ce lien de depot est invalide ou incomplet. Demandez un nouveau lien a l'organisateur.
+      </div>
+    </div>
+
+    <!-- Ecran principal -->
+    <div class="card hidden" id="screenMain">
+      <div class="deposit-head">
+        <span class="badge badge-brand">Zone de depot</span>
+        <div class="zone-name" id="zoneName">-</div>
+        <div class="zone-desc" id="zoneDesc"></div>
+      </div>
+
+      <div class="notice notice-warn hidden" id="configWarn">
+        L'envoi vers Drive n'est pas configure pour cette zone (identifiant client manquant).
+      </div>
+
+      <!-- Champs deposant -->
+      <div id="depositorFields"></div>
+
+      <!-- Zone de glisser-deposer -->
+      <div class="dropzone" id="dropzone">
+        <div class="dz-icon">&#128228;</div>
+        <div class="dz-main">Glissez vos fichiers ici</div>
+        <div class="dz-sub">ou cliquez pour parcourir &middot; max <span id="maxLabel">25</span> Mo par fichier</div>
+        <input type="file" id="fileInput" multiple class="hidden">
+      </div>
+
+      <!-- Liste des fichiers -->
+      <div id="fileList"></div>
+
+      <!-- Message d'erreur global -->
+      <div class="notice notice-err hidden" id="errBox" style="margin-top:16px"></div>
+
+      <!-- Bouton d'envoi -->
+      <button class="btn btn-primary btn-block btn-lg hidden" id="sendBtn" style="margin-top:18px">
+        <span id="sendLabel">Se connecter a Google et envoyer</span>
+      </button>
+
+      <p class="footer-note">
+        Les fichiers sont renommes automatiquement puis envoyes directement dans le Google Drive de l'organisateur.
+        Vous vous connectez avec votre propre compte Google.
+      </p>
+    </div>
+
+    <!-- Ecran de succes -->
+    <div class="card hidden" id="screenDone">
+      <div class="success-box">
+        <div class="big">&#9989;</div>
+        <h2>Depot termine</h2>
+        <p id="doneCount">Vos fichiers ont bien ete envoyes.</p>
+        <button class="btn btn-ghost" id="againBtn">Deposer d'autres fichiers</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+  const $ = (id) => document.getElementById(id);
+  let zone = null;
+  let files = [];          // { file, newName, status, progress }
+  let sending = false;
+
+  /* --------------------------- Lecture du lien -------------------------- */
+  function parseHash() {
+    const m = location.hash.match(/z=([^&]+)/);
+    if (!m) return null;
+    try { return ZoneConfig.decode(m[1]); } catch (e) { return null; }
+  }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  /* ------------------------------- Init --------------------------------- */
+  function init() {
+    zone = parseHash();
+    if (!zone || !zone.name) { $('screenInvalid').classList.remove('hidden'); return; }
+    $('screenMain').classList.remove('hidden');
+    $('zoneName').textContent = zone.name;
+    $('zoneDesc').textContent = zone.description || '';
+    $('maxLabel').textContent = zone.maxMb;
+    if (!zone.clientId) $('configWarn').classList.remove('hidden');
+
+    // Champs deposant
+    let html = '';
+    if (zone.fields.name) {
+      html += `<div class="field"><label for="depName">Votre nom</label>
+        <input type="text" id="depName" placeholder="Prenom Nom"></div>`;
+    }
+    if (zone.fields.email) {
+      html += `<div class="field"><label for="depEmail">Votre email</label>
+        <input type="email" id="depEmail" placeholder="prenom.nom@exemple.fr"></div>`;
+    }
+    $('depositorFields').innerHTML = html;
+  }
+
+  /* --------------------------- Gestion fichiers ------------------------- */
+  function depositorCtx() {
+    return {
+      zone: zone.name,
+      name: $('depName') ? $('depName').value : '',
+      email: $('depEmail') ? $('depEmail').value : ''
+    };
+  }
+
+  function addFiles(fileList) {
+    const ctx = depositorCtx();
+    Array.from(fileList).forEach((f) => {
+      const tooBig = f.size > zone.maxMb * 1024 * 1024;
+      files.push({
+        file: f,
+        newName: Renamer.apply(zone.template, {
+          ...ctx, original: f.name, counter: files.length + 1, date: new Date()
+        }),
+        status: tooBig ? 'error' : 'ready',
+        error: tooBig ? 'Fichier trop volumineux' : null,
+        progress: 0
+      });
+    });
+    renderFiles();
+  }
+
+  // Recalcule les noms quand le deposant remplit son nom/email
+  function recomputeNames() {
+    const ctx = depositorCtx();
+    files.forEach((item, i) => {
+      if (item.status === 'ready') {
+        item.newName = Renamer.apply(zone.template, {
+          ...ctx, original: item.file.name, counter: i + 1, date: new Date()
+        });
+      }
+    });
+    renderFiles();
+  }
+
+  function renderFiles() {
+    const list = $('fileList');
+    list.innerHTML = '';
+    files.forEach((item, i) => {
+      const icons = { ready: '&#128196;', uploading: '&#8987;', done: '&#9989;', error: '&#9888;&#65039;' };
+      const el = document.createElement('div');
+      el.className = 'file-row';
+      el.innerHTML = `
+        <div class="fr-icon">${icons[item.status] || '&#128196;'}</div>
+        <div class="fr-main">
+          <div class="fr-new">${escapeHtml(item.newName)}</div>
+          <div class="fr-old">${escapeHtml(item.file.name)}${item.error ? ' &middot; <span style="color:#b42318">'+item.error+'</span>' : ''}</div>
+          ${item.status === 'uploading' ? `<div class="progress"><span style="width:${Math.round(item.progress*100)}%"></span></div>` : ''}
+        </div>
+        <div class="fr-status">${item.status === 'ready' && !sending ? '<button class="icon-btn" title="Retirer">&times;</button>' : ''}</div>`;
+      const rm = el.querySelector('button');
+      if (rm) rm.onclick = () => { files.splice(i, 1); renderFiles(); };
+      list.appendChild(el);
+    });
+    const hasReady = files.some((f) => f.status === 'ready');
+    $('sendBtn').classList.toggle('hidden', !hasReady || sending);
+  }
+
+  /* ------------------------------ Envoi --------------------------------- */
+  async function send() {
+    if (sending) return;
+    $('errBox').classList.add('hidden');
+
+    if (!zone.clientId) {
+      showError('Cette zone n\'est pas configuree pour recevoir des fichiers (identifiant client manquant). Contactez l\'organisateur.');
+      return;
+    }
+    if (zone.fields.name && $('depName') && !$('depName').value.trim()) {
+      showError('Merci d\'indiquer votre nom.'); return;
+    }
+    if (zone.fields.email && $('depEmail') && !$('depEmail').value.trim()) {
+      showError('Merci d\'indiquer votre email.'); return;
+    }
+
+    sending = true;
+    $('sendBtn').disabled = true;
+    $('sendLabel').textContent = 'Connexion a Google...';
+
+    try {
+      await GDrive.init(zone.clientId);
+      await GDrive.requestToken();
+    } catch (e) {
+      sending = false;
+      $('sendBtn').disabled = false;
+      $('sendLabel').textContent = 'Se connecter a Google et envoyer';
+      showError('Connexion Google impossible : ' + e.message);
+      return;
+    }
+
+    $('sendLabel').textContent = 'Envoi en cours...';
+    renderFiles();
+
+    let ok = 0;
+    for (const item of files) {
+      if (item.status !== 'ready') continue;
+      item.status = 'uploading'; item.progress = 0; renderFiles();
+      try {
+        await GDrive.upload(item.file, item.newName, zone.folderId, (p) => {
+          item.progress = p; renderFiles();
+        });
+        item.status = 'done'; ok++;
+      } catch (e) {
+        item.status = 'error'; item.error = 'Echec de l\'envoi';
+        console.error(e);
+      }
+      renderFiles();
+    }
+
+    sending = false;
+    if (ok > 0 && files.every((f) => f.status !== 'ready')) {
+      $('screenMain').classList.add('hidden');
+      $('screenDone').classList.remove('hidden');
+      $('doneCount').textContent = ok + (ok > 1 ? ' fichiers ont' : ' fichier a') + ' bien ete envoye' + (ok > 1 ? 's' : '') + '.';
+    } else {
+      $('sendBtn').disabled = false;
+      $('sendLabel').textContent = 'Reessayer les fichiers en echec';
+      if (ok === 0) showError('Aucun fichier n\'a pu etre envoye. Verifiez votre acces au dossier Drive.');
+    }
+  }
+
+  function showError(msg) {
+    $('errBox').textContent = msg;
+    $('errBox').classList.remove('hidden');
+  }
+
+  /* ---------------------------- Liaisons UI ----------------------------- */
+  const dz = $('dropzone');
+  dz.onclick = () => $('fileInput').click();
+  $('fileInput').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+  ['dragenter', 'dragover'].forEach((ev) =>
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach((ev) =>
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
+  dz.addEventListener('drop', (e) => { if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+
+  $('sendBtn').onclick = send;
+  $('againBtn').onclick = () => {
+    files = []; sending = false;
+    $('sendBtn').disabled = false;
+    $('sendLabel').textContent = 'Se connecter a Google et envoyer';
+    renderFiles();
+    $('screenDone').classList.add('hidden');
+    $('screenMain').classList.remove('hidden');
+  };
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'depName' || e.target.id === 'depEmail') recomputeNames();
+  });
+
+  init();
+  </script>
+</body>
+</html>
