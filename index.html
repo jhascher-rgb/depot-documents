@@ -7,6 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=6">
+  <style>
+    .mine-msg { font-size: 13px; color: #6b7488; margin-bottom: 14px; }
+    .deliv-existing { margin-top: 10px; border-top: 1px dashed #e4e8f0; padding-top: 8px; }
+    .mine-title { font-size: 12px; font-weight: 700; color: #0a7a53; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+    .mine-item { font-size: 12.5px; color: #3a4256; padding: 2px 0; word-break: break-all; }
+    .mine-date { color: #6b7488; }
+  </style>
 </head>
 <body>
   <div class="wrap wrap-narrow">
@@ -122,10 +129,16 @@
       html += `<div class="field"><label for="depEmail">Votre email</label>
         <input type="email" id="depEmail" placeholder="prenom.nom@exemple.fr"></div>`;
     }
+    if (askName) {
+      html += `<button class="btn btn-ghost btn-block" id="btnMine" type="button" style="margin-bottom:12px">&#128194; Voir mes documents deja deposes</button>`;
+    }
+    html += '<div id="mineMsg" class="mine-msg"></div>';
     $('depositorFields').innerHTML = html;
     if (zone.structured && zone.campuses.length) {
-      $('depCampus').addEventListener('change', () => { populateGroups(); renderFiles(); });
+      $('depCampus').addEventListener('change', () => { populateGroups(); clearMine(); renderFiles(); });
     }
+    if ($('btnMine')) $('btnMine').onclick = () => loadMine(true);
+    if ($('depName')) $('depName').addEventListener('blur', () => { if (identityReady()) loadMine(false); });
 
     if (zone.hasDeliverables) {
       $('dropzone').classList.add('hidden');
@@ -146,7 +159,8 @@
           </div>
           <div class="deliv-add" data-add="${i}">&#128206; Ajouter des fichiers</div>
           <input type="file" multiple class="hidden" data-input="${i}">
-          <div class="deliv-files" data-files="${i}"></div>`;
+          <div class="deliv-files" data-files="${i}"></div>
+          <div class="deliv-existing hidden" data-existing="${i}"></div>`;
         box.appendChild(block);
         const input = block.querySelector('[data-input]');
         block.querySelector('[data-add]').onclick = () => input.click();
@@ -191,6 +205,77 @@
     }
     item.late = late;
     item.newName = Renamer.apply(tpl, { ...c, livrable, late, original: item.file.name, counter, date: new Date() });
+  }
+
+  /* --------------------- Mes documents deja deposes --------------------- */
+  function identityReady() {
+    const c = ctx();
+    if (zone.structured) { if (!c.campus || !c.groupe) return false; }
+    if (zone.structured || zone.hasDeliverables || (zone.fields && zone.fields.name)) { if (!c.name.trim()) return false; }
+    return true;
+  }
+  function clearMine() {
+    $('mineMsg').textContent = '';
+    document.querySelectorAll('[data-existing]').forEach((el) => { el.innerHTML = ''; el.classList.add('hidden'); });
+  }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return 'le ' + p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' a ' + p(d.getHours()) + 'h' + p(d.getMinutes());
+  }
+  async function loadMine(fromButton) {
+    if (!zone.gatewayUrl || !zone.rootFolderId) return;
+    if (!identityReady()) {
+      if (fromButton) $('mineMsg').textContent = zone.structured
+        ? 'Choisissez d\'abord votre campus, votre groupe et votre nom.'
+        : 'Indiquez d\'abord votre nom.';
+      return;
+    }
+    const c = ctx();
+    const path = [];
+    if (zone.structured) path.push(c.campus, c.groupe);
+    if (zone.structured || zone.hasDeliverables || (zone.fields && zone.fields.name)) path.push(c.name.trim());
+    const cleanPath = path.map((n) => Util.folderName(n)).filter(Boolean);
+    $('mineMsg').textContent = 'Recherche de vos depots...';
+    let data;
+    try {
+      const res = await fetch(zone.gatewayUrl + '?action=mine&root=' + encodeURIComponent(zone.rootFolderId) + '&path=' + encodeURIComponent(cleanPath.join('/')));
+      data = await res.json();
+    } catch (e) { $('mineMsg').textContent = 'Impossible de recuperer vos depots pour le moment.'; return; }
+    if (!data || !data.ok) { $('mineMsg').textContent = 'Erreur lors de la recuperation de vos depots.'; return; }
+    renderMine(data.files || []);
+  }
+  function renderMine(mineFiles) {
+    document.querySelectorAll('[data-existing]').forEach((el) => { el.innerHTML = ''; el.classList.add('hidden'); });
+    if (zone.hasDeliverables) {
+      const delivSlugs = zone.deliverables.map((d, i) => ({ i, slug: Util.slug(d.name) }))
+        .filter((d) => d.slug).sort((a, b) => b.slug.length - a.slug.length);
+      const byDeliv = {};
+      mineFiles.forEach((f) => {
+        const sn = Util.slug(f.name);
+        let mi = -1;
+        for (const d of delivSlugs) { if (sn.indexOf(d.slug) >= 0) { mi = d.i; break; } }
+        if (mi < 0) return;
+        (byDeliv[mi] = byDeliv[mi] || []).push(f);
+      });
+      zone.deliverables.forEach((d, i) => {
+        const cont = document.querySelector('[data-existing="' + i + '"]');
+        if (!cont) return;
+        const list = byDeliv[i] || [];
+        if (!list.length) return;
+        cont.classList.remove('hidden');
+        cont.innerHTML = '<div class="mine-title">&#10003; Deja depose</div>' + list.map((f) => {
+          const late = /EN-?RETARD/i.test(f.name);
+          return '<div class="mine-item">&#128196; ' + escapeHtml(f.name) + ' <span class="mine-date">' + fmtDate(f.date) + '</span>' + (late ? ' <span class="badge-late">EN RETARD</span>' : '') + '</div>';
+        }).join('');
+      });
+      $('mineMsg').textContent = mineFiles.length ? 'Vos documents deja deposes apparaissent sous chaque livrable ci-dessous.' : 'Aucun document deja depose pour ce nom.';
+    } else {
+      if (!mineFiles.length) { $('mineMsg').textContent = 'Aucun document deja depose pour ce nom.'; return; }
+      $('mineMsg').innerHTML = '<div class="mine-title">&#10003; Vos documents deja deposes</div>' +
+        mineFiles.map((f) => '<div class="mine-item">&#128196; ' + escapeHtml(f.name) + ' <span class="mine-date">' + fmtDate(f.date) + '</span></div>').join('');
+    }
   }
 
   function addFiles(fileList, delivIndex) {
@@ -320,9 +405,10 @@
     renderFiles();
     $('screenDone').classList.add('hidden');
     $('screenMain').classList.remove('hidden');
+    if (identityReady()) loadMine(false);
   };
   document.addEventListener('input', (e) => { if (['depName', 'depEmail'].includes(e.target.id)) renderFiles(); });
-  document.addEventListener('change', (e) => { if (e.target.id === 'depGroup') renderFiles(); });
+  document.addEventListener('change', (e) => { if (e.target.id === 'depGroup') { renderFiles(); if (identityReady()) loadMine(false); } });
 
   init();
   </script>

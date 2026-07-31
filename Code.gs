@@ -1,16 +1,13 @@
 /**
  * DepotDoc - Passerelle Google Apps Script
  * -----------------------------------------
- * - doPost : recoit un depot et enregistre le fichier dans VOTRE Drive,
- *            en creant automatiquement l'arborescence des dossiers.
- * - doGet?action=list&root=ID : renvoie la liste des fichiers deposes
- *            (pour le suivi "qui a rendu quoi" dans le tableau de bord).
+ * - doPost : recoit un depot et enregistre le fichier dans VOTRE Drive.
+ * - doGet?action=list&root=ID : liste TOUS les fichiers (suivi cote admin).
+ * - doGet?action=mine&root=ID&path=Campus/Groupe/Nom : liste UNIQUEMENT
+ *      les fichiers du dossier indique (pour que l'etudiant revoie ses depots).
  *
- * Le script s'execute avec VOS droits : les etudiants n'ont pas besoin de
- * compte Google, et il n'y a aucune limite de perimetre.
- *
- * DEPLOIEMENT : voir README (Deployer > Application Web > Executer en tant
- * que Moi, Acces Tout le monde).
+ * Le script s'execute avec VOS droits ; les etudiants n'ont pas de compte Google.
+ * DEPLOIEMENT : voir README (Application Web, Executer en tant que Moi, Acces Tout le monde).
  */
 
 function doPost(e) {
@@ -36,10 +33,11 @@ function doPost(e) {
 function doGet(e) {
   var p = (e && e.parameter) || {};
   if (p.action === 'list' && p.root) return json(listZone(p.root));
+  if (p.action === 'mine' && p.root) return json(listFolder(p.root, p.path || ''));
   return json({ ok: true, msg: 'Passerelle DepotDoc active' });
 }
 
-/** Parcourt le dossier racine et renvoie tous les fichiers avec leur chemin. */
+/** Liste TOUS les fichiers sous la racine (suivi admin). */
 function listZone(rootId) {
   try {
     var root = DriveApp.getFolderById(rootId);
@@ -62,6 +60,29 @@ function collect(folder, path, files, depth) {
   while (dit.hasNext()) {
     var d = dit.next();
     collect(d, path.concat([d.getName()]), files, depth + 1);
+  }
+}
+
+/** Liste UNIQUEMENT les fichiers d'un dossier precis (root + chemin). */
+function listFolder(rootId, pathStr) {
+  try {
+    var folder = DriveApp.getFolderById(rootId);
+    var segs = pathStr ? pathStr.split('/') : [];
+    for (var i = 0; i < segs.length; i++) {
+      if (!segs[i]) continue;
+      var it = folder.getFoldersByName(segs[i]);
+      if (!it.hasNext()) return { ok: true, files: [] };  // dossier pas encore cree
+      folder = it.next();
+    }
+    var files = [];
+    var fit = folder.getFiles();
+    while (fit.hasNext()) {
+      var f = fit.next();
+      files.push({ name: f.getName(), date: f.getLastUpdated().toISOString() });
+    }
+    return { ok: true, files: files };
+  } catch (err) {
+    return { ok: false, error: String(err) };
   }
 }
 
